@@ -1,0 +1,69 @@
+#!/bin/bash
+set -euo pipefail
+
+# BitDVR "copy magnet link" path — creates a torrent for --path and hands
+# it to the local libtorrent seed daemon, same as bitdvr-sync.sh, but
+# skips deluge-web and skips archiving to Library/.sent/ entirely. This
+# is an ad hoc distribution path (paste the magnet into any Deluge/
+# qBittorrent/Transmission client on the LAN) rather than the automated
+# send to the Plex box, so the source file is left in place in the
+# pending Library tree and can still be sent normally later.
+#
+# The torrent is created with no trackers at all and the private flag
+# set, same as bitdvr-sync.sh — no tracker, public or otherwise, ever
+# sees this info-hash. The magnet link includes an x.pe peer hint
+# pointing straight at Snow instead, so a client that pastes this in
+# doesn't need any tracker or DHT to find Snow — both would be unusable
+# for this anyway, since Snow's peer port isn't forwarded from the WAN
+# and the seed daemon has DHT/LSD disabled (see
+# bitdvr-libtorrent-daemon.py).
+#
+# Prints the magnet link as the last line of stdout.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3"
+SEED_WATCH_DIR="$HOME/.config/bitdvr-libtorrent-daemon/watch"
+TORRENT_DIR="$HOME/Videos/OBS/.torrents"
+PEER_PORT=51413
+
+usage() {
+    echo "Usage: $0 --path <file-or-dir>" >&2
+    exit 1
+}
+
+SRC_PATH=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --path) SRC_PATH="$2"; shift 2 ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+if [[ -z "$SRC_PATH" || ! -e "$SRC_PATH" ]]; then
+    echo "error: --path not found: $SRC_PATH" >&2
+    exit 1
+fi
+SRC_PATH="$(cd "$(dirname "$SRC_PATH")" && pwd)/$(basename "$SRC_PATH")"
+
+mkdir -p "$TORRENT_DIR"
+NAME="$(basename "$SRC_PATH")"
+TORRENT_FILE="$TORRENT_DIR/${NAME}.torrent"
+
+echo "==> Creating torrent for $NAME (private, no trackers)..."
+"$PYTHON" "$SCRIPT_DIR/bitdvr-create-torrent.py" --private -o "$TORRENT_FILE" "$SRC_PATH"
+
+echo "==> Seeding on Snow via bitdvr-libtorrent-daemon..."
+mkdir -p "$SEED_WATCH_DIR"
+WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
+jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
+cp "$TORRENT_FILE" "$WATCH_TORRENT"
+
+SNOW_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+if [[ -z "$SNOW_IP" ]]; then
+    echo "error: could not determine Snow's LAN IP" >&2
+    exit 1
+fi
+
+MAGNET=$("$PYTHON" "$SCRIPT_DIR/bitdvr-magnet-uri.py" "$TORRENT_FILE")
+echo "==> Done. Stop seeding when no longer needed: rm '$WATCH_TORRENT' '$WATCH_TORRENT.json'"
+echo "${MAGNET}&x.pe=${SNOW_IP}:${PEER_PORT}"
