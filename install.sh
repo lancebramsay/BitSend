@@ -49,14 +49,44 @@ die()  { echo "error: $*" >&2; exit 1; }
 [[ "${EUID}" -eq 0 ]] && die "run this as your normal user, not root — everything installs into your own home directory"
 [[ -f "$REPO_DIR/src/bitdvr-gui.py" ]] || die "run this from a BitDVR checkout (src/bitdvr-gui.py not found next to install.sh)"
 
+# ------------------------------------------------------------ interpreters
+
+# The GUI needs a Python with tkinter; the torrent scripts need one with
+# libtorrent. Usually the same /usr/bin/python3, but not always (e.g. a
+# Homebrew-on-Linux Python providing both while the system one has
+# neither) — so detect each separately, BEFORE deciding any package is
+# missing, and pin the installed copies to what was actually found
+# rather than hoping `env python3` resolves to the right thing at
+# runtime.
+have_tk()  { "$1" -c 'import tkinter' >/dev/null 2>&1; }
+have_lt()  { "$1" -c 'import libtorrent' >/dev/null 2>&1; }
+
+GUI_PYTHON=""
+LT_PYTHON=""
+scan_interpreters() {
+    local candidates=(python3 /usr/bin/python3 /home/linuxbrew/.linuxbrew/bin/python3 /opt/homebrew/bin/python3) c p
+    [[ -n "${BITDVR_PYTHON:-}" ]] && candidates=("$BITDVR_PYTHON" "${candidates[@]}")
+    GUI_PYTHON=""
+    LT_PYTHON=""
+    for c in "${candidates[@]}"; do
+        p="$(command -v "$c" 2>/dev/null || true)"
+        [[ -n "$p" ]] || continue
+        [[ -z "$GUI_PYTHON" ]] && have_tk "$p" && GUI_PYTHON="$p"
+        [[ -z "$LT_PYTHON" ]] && have_lt "$p" && LT_PYTHON="$p"
+    done
+}
+scan_interpreters
+
 # ---------------------------------------------------------------- packages
 
-# Only what's actually missing gets installed, so --skip-deps and rerun
-# behavior stay predictable. Package names per distro family; libtorrent
+# Only what's genuinely missing gets installed — a dependency counts as
+# satisfied if ANY detected interpreter provides it, not just the
+# default python3. Package names per distro family; libtorrent
 # Python-binding names especially vary, so those are candidate lists —
 # the first one the package manager recognizes wins.
 PM=""
-if command -v apt-get >/dev/null; then PM=apt
+if command -v rpm-ostree >/dev/null; then PM=atomic
+elif command -v apt-get >/dev/null; then PM=apt
 elif command -v dnf >/dev/null; then PM=dnf
 elif command -v pacman >/dev/null; then PM=pacman
 fi
@@ -70,33 +100,42 @@ pkg_install() { # pkg_install <package>...
     esac
 }
 
-have_tk()  { "$1" -c 'import tkinter' >/dev/null 2>&1; }
-have_lt()  { "$1" -c 'import libtorrent' >/dev/null 2>&1; }
-
 missing=()
 if ! command -v jq >/dev/null && [[ $LOCAL_ONLY -eq 0 ]]; then missing+=(jq); fi
 if ! command -v secret-tool >/dev/null; then
     case "$PM" in
         apt) missing+=(libsecret-tools) ;;
-        dnf) missing+=(libsecret) ;;
-        pacman) missing+=(libsecret) ;;
+        *) missing+=(libsecret) ;;
     esac
 fi
-if ! have_tk python3; then
+if [[ -z "$GUI_PYTHON" ]]; then
     case "$PM" in
         apt) missing+=(python3-tk) ;;
         dnf) missing+=(python3-tkinter) ;;
         pacman) missing+=(tk) ;;
+        *) missing+=(python3-tk) ;;
     esac
 fi
 
 if [[ $SKIP_DEPS -eq 0 && ${#missing[@]} -gt 0 ]]; then
-    [[ -n "$PM" ]] || die "no supported package manager found (apt/dnf/pacman) — install these yourself, then rerun with --skip-deps: ${missing[*]}"
-    info "Installing packages (sudo): ${missing[*]}"
-    pkg_install "${missing[@]}"
+    case "$PM" in
+        atomic)
+            # Immutable/rpm-ostree distros (Silverblue, Bazzite, ...) —
+            # layering packages there is the user's call, not this
+            # script's. Homebrew-on-Linux is usually the better route.
+            die "this looks like an immutable (rpm-ostree) distro — install these yourself (e.g. 'brew install ${missing[*]}' or 'rpm-ostree install ${missing[*]}'), then rerun: ${missing[*]}"
+            ;;
+        "")
+            die "no supported package manager found (apt/dnf/pacman) — install these yourself, then rerun: ${missing[*]}"
+            ;;
+        *)
+            info "Installing packages (sudo): ${missing[*]}"
+            pkg_install "${missing[@]}"
+            ;;
+    esac
 fi
 
-if [[ $LOCAL_ONLY -eq 0 && $SKIP_DEPS -eq 0 ]] && ! have_lt python3; then
+if [[ $LOCAL_ONLY -eq 0 && $SKIP_DEPS -eq 0 && -z "$LT_PYTHON" ]]; then
     # libtorrent Python bindings — the package name varies by distro and
     # some distros ship only the C++ library. Try known names, then fall
     # back to pip only with an explicit prompt (a source build is slow
@@ -106,6 +145,7 @@ if [[ $LOCAL_ONLY -eq 0 && $SKIP_DEPS -eq 0 ]] && ! have_lt python3; then
         apt) lt_candidates=(python3-libtorrent) ;;
         dnf) lt_candidates=(python3-libtorrent rb_libtorrent-python3) ;;
         pacman) lt_candidates=(libtorrent-rasterbar) ;;
+        atomic) die "this looks like an immutable (rpm-ostree) distro — install Python libtorrent bindings yourself (e.g. 'brew install libtorrent-rasterbar'), then rerun (or use --local-only)" ;;
     esac
     lt_ok=0
     for pkg in "${lt_candidates[@]}"; do
@@ -120,25 +160,8 @@ if [[ $LOCAL_ONLY -eq 0 && $SKIP_DEPS -eq 0 ]] && ! have_lt python3; then
     fi
 fi
 
-# ------------------------------------------------------------ interpreters
-
-# The GUI needs a Python with tkinter; the torrent scripts need one with
-# libtorrent. Usually the same /usr/bin/python3, but not always (e.g. a
-# Homebrew-on-Linux Python providing both while the system one has
-# neither) — so detect each separately and pin the installed copies to
-# what was actually found, rather than hoping `env python3` resolves to
-# the right thing at runtime.
-candidates=(python3 /usr/bin/python3 /home/linuxbrew/.linuxbrew/bin/python3 /opt/homebrew/bin/python3)
-[[ -n "${BITDVR_PYTHON:-}" ]] && candidates=("$BITDVR_PYTHON" "${candidates[@]}")
-
-GUI_PYTHON=""
-LT_PYTHON=""
-for c in "${candidates[@]}"; do
-    p="$(command -v "$c" 2>/dev/null || true)"
-    [[ -n "$p" ]] || continue
-    [[ -z "$GUI_PYTHON" ]] && have_tk "$p" && GUI_PYTHON="$p"
-    [[ -z "$LT_PYTHON" ]] && have_lt "$p" && LT_PYTHON="$p"
-done
+# Anything just installed shows up on a rescan.
+scan_interpreters
 [[ -n "$GUI_PYTHON" ]] || die "no Python with tkinter found — install your distro's Tk package (see docs/README.md) and rerun"
 if [[ $LOCAL_ONLY -eq 0 && -z "$LT_PYTHON" ]]; then
     die "no Python with libtorrent bindings found — install them (see docs/README.md), rerun, or use --local-only"
