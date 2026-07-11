@@ -56,7 +56,13 @@ behind it, and the full disclaimer. Good starting points:
 
 ## Getting started
 
-Head to the **[User Guide](docs/README.md)**:
+```sh
+git clone https://github.com/<you>/bitdvr.git
+cd bitdvr
+./install.sh
+```
+
+Then head to the **[User Guide](docs/README.md)**:
 
 - [Getting started](docs/README.md) — requirements, installation, and
   choosing between the local and network paths

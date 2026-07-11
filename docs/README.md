@@ -60,37 +60,40 @@ Additionally, for the **network path** only:
 
 ## Installation
 
-BitDVR is plain scripts — installation is copying them somewhere on
-your `PATH`:
-
 ```sh
 git clone https://github.com/<you>/bitdvr.git
 cd bitdvr
-mkdir -p ~/.local/bin
-cp bitdvr-*.py bitdvr-*.sh ~/.local/bin/
-cp -r vendor ~/.local/bin/
+./install.sh
 ```
 
-> **Note:** the script shebangs currently point at a Homebrew Python
-> (`/home/linuxbrew/.linuxbrew/...`). If your Python lives elsewhere,
-> update the first line of each `.py` file and the `PYTHON=` variable
-> near the top of the `.sh` scripts to match (e.g.
-> `/usr/bin/python3`). A proper installer that handles this is on the
-> roadmap.
+The installer never runs as root and touches only your own home
+directory. It:
 
-Launch the GUI with `bitdvr-gui.py`. To pin it to your taskbar, drop a
-desktop entry at `~/.local/share/applications/bitdvr.desktop`:
+- installs missing dependencies through your distro's package manager
+  (`apt`/`dnf`/`pacman`, with a `sudo` prompt for that step only);
+- finds a Python with Tkinter and one with libtorrent (not always the
+  same one) and pins the installed scripts to them;
+- copies BitDVR to `~/.local/bin`, adds an application-menu entry, and
+  sets up the seed daemon as a `systemd --user` service;
+- warns (but doesn't fail) if OBS Studio isn't detected;
+- is safe to re-run any time — updates in place, never overwrites your
+  settings.
 
-```ini
-[Desktop Entry]
-Type=Application
-Name=BitDVR
-Exec=/home/YOU/.local/bin/bitdvr-gui.py
-Categories=AudioVideo;Recorder;
-```
+Two flags: `./install.sh --local-only` skips the BitTorrent
+dependencies and the seed daemon entirely (for the
+[local path](local-mode.md)); `--skip-deps` skips the package-manager
+step if you'd rather install dependencies yourself.
 
-The **network path** additionally needs the seed daemon running as a
-user service — see [Network path: the seed daemon](network-mode.md#the-seed-daemon).
+To remove BitDVR, run `./uninstall.sh` — settings, recordings, and the
+staging library are kept unless you pass `--purge-config` /
+`--purge-library`, both of which ask before deleting anything.
+
+Prefer doing it by hand, or on a distro the installer doesn't know?
+It's all plain scripts: copy `bitdvr-*.py`, `bitdvr-*.sh`, and
+`vendor/` into `~/.local/bin`, make sure `python3` has Tkinter (plus
+libtorrent for the network path), and — for the network path — set up
+the seed daemon service shown in
+[Network path: the seed daemon](network-mode.md#the-seed-daemon).
 
 ## First run
 
