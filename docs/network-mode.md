@@ -52,10 +52,13 @@ service at `~/.config/systemd/user/bitdvr-libtorrent-daemon.service`:
 ```ini
 [Unit]
 Description=BitDVR libtorrent seed daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 ExecStart=%h/.local/bin/bitdvr-libtorrent-daemon.py
 Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=default.target

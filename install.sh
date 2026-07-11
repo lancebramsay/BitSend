@@ -176,14 +176,20 @@ fi
 
 info "Installing desktop entry"
 mkdir -p "$APP_DIR"
+# StartupWMClass matches the WM_CLASS the GUI sets on itself, so
+# taskbars associate its window with this entry (and its icon) instead
+# of showing a generic interpreter icon. video-television is a standard
+# freedesktop theme icon, present in common icon themes.
 cat > "$APP_DIR/bitdvr.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=BitDVR
 Comment=Record with OBS and file recordings into your media library
 Exec=$BIN_DIR/bitdvr-gui.py
+Icon=video-television
 Terminal=false
 Categories=AudioVideo;Recorder;
+StartupWMClass=bitdvr
 EOF
 
 # ---------------------------------------------------------------- service
@@ -194,10 +200,13 @@ if [[ $LOCAL_ONLY -eq 0 ]]; then
     cat > "$UNIT_DIR/$SERVICE.service" <<EOF
 [Unit]
 Description=BitDVR libtorrent seed daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 ExecStart=$BIN_DIR/bitdvr-libtorrent-daemon.py
 Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=default.target
