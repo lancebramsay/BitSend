@@ -95,3 +95,8 @@ warranty** and its authors accept **no liability** for how it is used
 (GPL-3.0 §§15–16). Vendored dependencies keep their own licenses:
 [`obsws-python`](src/vendor/obsws_python/LICENSE) (GPL-3.0),
 [`websocket-client`](src/vendor/websocket/LICENSE) (Apache-2.0).
+
+The project artwork ([`docs/assets/social-preview.png`](docs/assets/social-preview.png))
+incorporates the `video-television` icon from KDE's
+[Breeze icon theme](https://invent.kde.org/frameworks/breeze-icons)
+(LGPL-3.0-or-later) — the same theme icon the app uses on the desktop.
