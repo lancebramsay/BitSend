@@ -1,6 +1,6 @@
-#!/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3
+#!/usr/bin/env python3
 # Creates a .torrent using libtorrent directly (not transmission-create).
-# Deluge on the Plex box is itself built on libtorrent, so building the
+# Deluge on the receiving box is itself built on libtorrent, so building
 # torrent with the same library removes one implementation from the
 # picture — see bitdvr-sync.sh for the fuller story on why this matters.
 import argparse

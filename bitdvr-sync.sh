@@ -2,15 +2,16 @@
 set -euo pipefail
 
 # BitDVR step 2 of 2 — sends a file or folder from the local Library
-# staging area (see bitdvr-organize.sh) to the Plex box (192.168.14.229 by
-# default — override with $BITDVR_PLEX_HOST, which is how the BitDVR GUI's
-# Settings tab passes a changed IP without editing this script) over a
-# BitTorrent swarm of exactly two real peers (Snow + the Plex box's
-# Deluge), instead of opening SSH/Samba on the box that also runs Wazuh
-# SIEM. Deluge-web is already reachable from Snow's VLAN with no firewall
-# changes, and Deluge already accepts inbound peer connections as its
-# normal job, so this adds no new listening service or attack surface on
-# the SIEM host.
+# staging area (see bitdvr-organize.sh) to the media-server box over a
+# BitTorrent swarm of exactly two real peers (this machine + the media
+# box's Deluge), instead of opening SSH/Samba on that box just to move
+# video files. Deluge-web is typically already reachable on the LAN, and
+# Deluge already accepts inbound peer connections as its normal job, so
+# this adds no new listening service or attack surface on the media box.
+#
+# The Deluge host has no default: pass --host, or set $BITDVR_PLEX_HOST
+# (which is how the BitDVR GUI's Settings tab threads its configured
+# Deluge Host IP through without editing this script).
 #
 # Both the torrent file and the seed are built with libtorrent directly
 # (bitdvr-create-torrent.py / bitdvr-libtorrent-daemon.py), not
@@ -19,19 +20,19 @@ set -euo pipefail
 # encryption, interested/unchoke all completed — confirmed via packet
 # capture) but piece data never flowed, even after 20+ minutes with an
 # established, unchoked peer. Deluge's own downloads (magnet links, any
-# torrent not created/seeded by Snow) work fine, which pointed away from
-# a general "old libtorrent can't talk to anything modern" theory and
-# toward Transmission's independent BT implementation specifically not
-# interoperating with Deluge's libtorrent for this one path. Building
-# and seeding with libtorrent on both ends removes that variable
-# entirely. The torrent is created with no trackers at all and the
-# private flag set (see bitdvr-create-torrent.py --private) — no tracker,
-# public or otherwise, ever sees this info-hash. core.connect_peer below
-# is how the two peers actually find each other, seeding the connection
-# directly instead of relying on discovery of any kind; Snow's peer port
-# (51413) is also not forwarded from the WAN (see unifi/firewall.md), so
-# nothing outside the LAN could reach Snow even if something did leak
-# the hash.
+# torrent not created/seeded by this setup) worked fine, which pointed
+# away from a general "old libtorrent can't talk to anything modern"
+# theory and toward Transmission's independent BT implementation
+# specifically not interoperating with Deluge's libtorrent for this one
+# path. Building and seeding with libtorrent on both ends removes that
+# variable entirely. The torrent is created with no trackers at all and
+# the private flag set (see bitdvr-create-torrent.py --private) — no
+# tracker, public or otherwise, ever sees this info-hash.
+# core.connect_peer below is how the two peers actually find each other,
+# seeding the connection directly instead of relying on discovery of any
+# kind; the seed box's peer port (51413) should never be forwarded from
+# the WAN either, so nothing outside the LAN can reach it even if
+# something did leak the hash.
 #
 # --path can be a single file (one movie or one episode) or a directory
 # (a whole "Season NN" folder, or a whole Series folder spanning multiple
@@ -63,17 +64,17 @@ set -euo pipefail
 # be re-archived).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON="/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3"
+PYTHON="${BITDVR_PYTHON:-python3}"
 SEED_WATCH_DIR="$HOME/.config/bitdvr-libtorrent-daemon/watch"
 LIBRARY_DIR="$HOME/Videos/OBS/Library"
 TORRENT_DIR="$HOME/Videos/OBS/.torrents"
-PLEX_HOST="${BITDVR_PLEX_HOST:-192.168.14.229}"
+PLEX_HOST="${BITDVR_PLEX_HOST:-}"
 PEER_PORT=51413
-DELUGE_WEB_URL="http://${PLEX_HOST}:8112"
 SECRET_SERVICE="bitdvr-deluge-web"
 
 usage() {
-    echo "Usage: $0 --label movies|tv --path <file-or-dir> [--move-to <abs-path-on-plex-box>]" >&2
+    echo "Usage: $0 --label movies|tv --path <file-or-dir> [--host <deluge-host>] [--move-to <abs-path-on-deluge-host>]" >&2
+    echo "       --host defaults to \$BITDVR_PLEX_HOST; one of the two is required" >&2
     exit 1
 }
 
@@ -84,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --label) LABEL="$2"; shift 2 ;;
         --path) SRC_PATH="$2"; shift 2 ;;
+        --host) PLEX_HOST="$2"; shift 2 ;;
         --move-to) MOVE_TO="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) usage ;;
@@ -94,6 +96,12 @@ if [[ "$LABEL" != "movies" && "$LABEL" != "tv" ]]; then
     echo "error: --label must be 'movies' or 'tv'" >&2
     exit 1
 fi
+if [[ -z "$PLEX_HOST" ]]; then
+    echo "error: no Deluge host configured — pass --host, set \$BITDVR_PLEX_HOST," >&2
+    echo "       or set the Deluge Host IP in the BitDVR GUI's Settings tab" >&2
+    exit 1
+fi
+DELUGE_WEB_URL="http://${PLEX_HOST}:8112"
 if [[ -z "$SRC_PATH" || ! -e "$SRC_PATH" ]]; then
     echo "error: --path not found: $SRC_PATH" >&2
     exit 1
@@ -149,7 +157,7 @@ if [[ -z "$DELUGE_WEB_PASSWORD" ]]; then
         echo "error: empty password entered" >&2
         exit 1
     fi
-    printf '%s' "$DELUGE_WEB_PASSWORD" | secret-tool store --label="Deluge-web (Plex box)" service "$SECRET_SERVICE" account deluge-web
+    printf '%s' "$DELUGE_WEB_PASSWORD" | secret-tool store --label="BitDVR deluge-web" service "$SECRET_SERVICE" account deluge-web
     echo "Stored in the login keyring (ksecretd) — not written to disk in plaintext."
 fi
 
@@ -160,18 +168,18 @@ TORRENT_FILE="$TORRENT_DIR/${NAME}.torrent"
 echo "==> Creating torrent for $NAME (private, no trackers)..."
 "$PYTHON" "$SCRIPT_DIR/bitdvr-create-torrent.py" --private -o "$TORRENT_FILE" "$SRC_PATH"
 
-echo "==> Seeding on Snow via bitdvr-libtorrent-daemon..."
+echo "==> Seeding locally via bitdvr-libtorrent-daemon..."
 mkdir -p "$SEED_WATCH_DIR"
 WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
 jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
 cp "$TORRENT_FILE" "$WATCH_TORRENT"
 
-SNOW_IP=$(ip route get "$PLEX_HOST" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
-if [[ -z "$SNOW_IP" ]]; then
-    echo "error: could not determine Snow's LAN IP toward the Plex box" >&2
+LOCAL_IP=$(ip route get "$PLEX_HOST" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+if [[ -z "$LOCAL_IP" ]]; then
+    echo "error: could not determine this machine's LAN IP toward the Deluge host" >&2
     exit 1
 fi
-echo "    Seeding from $SNOW_IP:$PEER_PORT"
+echo "    Seeding from $LOCAL_IP:$PEER_PORT"
 
 COOKIE_JAR=$(mktemp)
 RPC_BODY_FILE=$(mktemp)
@@ -212,19 +220,19 @@ ADD_RESP=$(deluge_rpc "core.add_torrent_file" "$(jq -nc --arg name "${NAME}.torr
 TORRENT_ID=$(echo "$ADD_RESP" | jq -r '.result // empty')
 if [[ -z "$TORRENT_ID" || "$TORRENT_ID" == "false" ]]; then
     echo "error: failed to add torrent: $ADD_RESP" >&2
-    echo "Fallback: open $DELUGE_WEB_URL manually, add $TORRENT_FILE, then add peer $SNOW_IP:$PEER_PORT to it." >&2
+    echo "Fallback: open $DELUGE_WEB_URL manually, add $TORRENT_FILE, then add peer $LOCAL_IP:$PEER_PORT to it." >&2
     exit 1
 fi
 echo "    torrent id: $TORRENT_ID"
 
 # Label (and, for series sends, the move-completed override) are
-# applied *before* core.connect_peer, not after. Snow is already
-# seeding the file at 100% — once the peer connects, this is a LAN
-# transfer that can finish in well under a second, firing Deluge's
+# applied *before* core.connect_peer, not after. This machine is
+# already seeding the file at 100% — once the peer connects, this is a
+# LAN transfer that can finish in well under a second, firing Deluge's
 # move-on-complete exactly once. Every prior send confirmed this
 # empirically: every torrent BitDVR had labeled "tv" landed with
 # move_completed still false, sitting wherever it was first written
-# instead of /mnt/plex-media/TV, because label.set_torrent used to run
+# instead of the label's TV path, because label.set_torrent used to run
 # *after* connect_peer and consistently lost the race. Configuring the
 # label/move destination first guarantees it's already active before
 # the transfer can possibly complete.
@@ -239,16 +247,16 @@ if [[ -n "$MOVE_TO" ]]; then
     echo "    (Deluge should create $MOVE_TO if it doesn't exist yet — unverified against the live box, watch deluge-web to confirm.)"
 fi
 
-echo "==> Connecting Snow as a direct peer..."
+echo "==> Connecting this machine as a direct peer..."
 # core.connect_peer(torrent_id, ip, port) takes ip and port as separate
 # args, not a combined "ip:port" string — passing them combined leaves
 # Deluge's RPC dispatcher one positional argument short and it silently
 # no-ops the peer connection (surfaces as 0 seeds/0 peers forever, since
-# the tracker is a deliberate non-resolving placeholder and was never
-# going to find Snow on its own).
-PEER_RESP=$(deluge_rpc "core.connect_peer" "$(jq -nc --arg id "$TORRENT_ID" --arg ip "$SNOW_IP" --argjson port "$PEER_PORT" '[$id, $ip, $port]')")
+# there is no tracker and nothing else was ever going to find the seed
+# on its own).
+PEER_RESP=$(deluge_rpc "core.connect_peer" "$(jq -nc --arg id "$TORRENT_ID" --arg ip "$LOCAL_IP" --argjson port "$PEER_PORT" '[$id, $ip, $port]')")
 echo "    $PEER_RESP"
 
 echo "==> Done. Watch progress at $DELUGE_WEB_URL"
-echo "    It should download directly from Snow, not from the internet."
-echo "    Once it finishes, stop seeding on Snow: rm '$WATCH_TORRENT' '$WATCH_TORRENT.json'"
+echo "    It should download directly from this machine, not from the internet."
+echo "    Once it finishes, stop seeding: rm '$WATCH_TORRENT' '$WATCH_TORRENT.json'"

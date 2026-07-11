@@ -35,8 +35,11 @@ The swarm can never extend beyond your two machines:
    [Getting started](README.md#requirements)) and the seed daemon
    below.
 3. In BitDVR's **Settings** tab, set **Deluge Host IP** to the
-   media-server machine and save. The first Send prompts once for the
-   Deluge web password and keeps it in your keyring.
+   media-server machine and **Media library root (on Deluge host)** to
+   the folder there containing `Movies/` and `TV/` (the same root your
+   Deluge labels move completed downloads into), then save. The first
+   Send prompts once for the Deluge web password and keeps it in your
+   keyring.
 
 ### The seed daemon
 

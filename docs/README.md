@@ -101,8 +101,10 @@ user service — see [Network path: the seed daemon](network-mode.md#the-seed-da
    - **Local:** tick *Local mode* and set your media library folder
      (e.g. `/mnt/media`). The Send and Clean tabs disappear — see
      [Local path](local-mode.md).
-   - **Network:** set **Deluge Host IP** to the media-server machine —
-     see [Network path](network-mode.md).
+   - **Network:** set **Deluge Host IP** to the media-server machine,
+     and **Media library root (on Deluge host)** to the folder there
+     that contains `Movies/` and `TV/` (e.g. `/mnt/media`) — see
+     [Network path](network-mode.md).
 4. Click **Save**. The first time BitDVR talks to OBS (and, on the
    network path, to Deluge) it prompts once for that password and
    stores it in your desktop keyring.

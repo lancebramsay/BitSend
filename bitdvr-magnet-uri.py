@@ -1,4 +1,4 @@
-#!/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3
+#!/usr/bin/env python3
 # Prints the magnet URI for an existing .torrent file. Used by
 # bitdvr-magnet.sh instead of inlining this into a shell-interpolated
 # `python3 -c` string, since torrent/file paths can contain characters

@@ -1,4 +1,4 @@
-#!/home/linuxbrew/.linuxbrew/bin/python3
+#!/usr/bin/env python3
 # BitDVR — GUI wrapper around bitdvr-organize.sh and bitdvr-sync.sh, meant
 # to be installed to ~/.local/bin alongside copies of those scripts (see
 # bitdvr-setup.sh) and pinned to the KDE taskbar as its own app. A DVR for
@@ -25,13 +25,13 @@
 #     entirely and doesn't archive the source file — an ad hoc way to
 #     pull a recording into any Deluge/qBittorrent/Transmission client on
 #     the LAN instead of the automated Plex send.
-#   Settings — OBS WebSocket host/port and the Plex box host/IP, persisted
-#     to ~/.config/bitdvr/config.json (not the keyring — these aren't
-#     secret). Also holds "Change Password" actions for the two keyring
-#     secrets below, since the normal prompt flow only fires when nothing
-#     is stored yet. The Plex host is threaded through to bitdvr-sync.sh
-#     via the BITDVR_PLEX_HOST env var rather than a CLI flag, since the
-#     script already has its own PLEX_HOST default for standalone use.
+#   Settings — OBS WebSocket host/port, the Deluge host, and the library
+#     roots, persisted to ~/.config/bitdvr/config.json (not the keyring —
+#     these aren't secret). Also holds "Change Password" actions for the
+#     two keyring secrets below, since the normal prompt flow only fires
+#     when nothing is stored yet. The Deluge host is threaded through to
+#     bitdvr-sync.sh via the BITDVR_PLEX_HOST env var rather than a CLI
+#     flag, matching the env override the script accepts standalone.
 #
 # Organize/Send run their shell script as a subprocess and stream its
 # stdout/stderr into a shared scrolling log pane live, while also writing
@@ -60,11 +60,11 @@ from tkinter import filedialog, messagebox, ttk
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 # obsws_python (and its own dependency, websocket-client) are vendored
-# under vendor/ rather than pip-installed — both are pure Python, small,
-# and this repo isn't public yet, so bundling them removes a PyPI round
-# trip from setup entirely. bitdvr-setup.sh deploys vendor/ alongside
-# this script, so this resolves whether running from the repo checkout
-# or from ~/.local/bin.
+# under vendor/ rather than pip-installed — both are pure Python and
+# small, so bundling them (licenses included alongside the source)
+# removes a PyPI round trip from setup entirely. The installer deploys
+# vendor/ alongside this script, so this resolves whether running from
+# the repo checkout or from ~/.local/bin.
 sys.path.insert(0, str(SCRIPT_DIR / "vendor"))
 try:
     import obsws_python as obs
@@ -84,14 +84,13 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 SECRET_TOOL = "secret-tool"
 SECRET_SERVICE = "bitdvr-deluge-web"
 OBS_SECRET_SERVICE = "bitdvr-obs-websocket"
-PLEX_ROOTS = {"movies": "/mnt/plex-media/Movies", "tv": "/mnt/plex-media/TV"}
-
 DEFAULT_CONFIG = {
     "obs_host": "127.0.0.1",
     "obs_port": 4455,
-    "plex_host": "192.168.14.229",
+    "plex_host": "",
+    "remote_library_root": "",
     "local_mode": False,
-    "local_library_root": "/mnt/plex-media",
+    "local_library_root": "",
 }
 
 
@@ -494,13 +493,13 @@ class App(tk.Tk):
             messagebox.showerror(
                 "Missing dependency",
                 "obsws-python is not installed.\n\n"
-                "Run: /home/linuxbrew/.linuxbrew/bin/python3 -m pip install --user obsws-python",
+                "Run: python3 -m pip install --user obsws-python",
             )
             return None
         pw = self._get_or_prompt_secret(
             OBS_SECRET_SERVICE,
             "obs-websocket",
-            "OBS WebSocket (Snow)",
+            "BitDVR OBS WebSocket",
             "OBS WebSocket server password (stored in the login keyring):",
         )
         if pw is None:
@@ -686,6 +685,9 @@ class App(tk.Tk):
         self.set_obs_host_var = tk.StringVar(value=self.config["obs_host"])
         self.set_obs_port_var = tk.StringVar(value=str(self.config["obs_port"]))
         self.set_plex_host_var = tk.StringVar(value=self.config["plex_host"])
+        self.set_remote_root_var = tk.StringVar(
+            value=self.config.get("remote_library_root", DEFAULT_CONFIG["remote_library_root"])
+        )
         self.set_local_mode_var = tk.BooleanVar(value=self.config.get("local_mode", False))
         self.set_local_library_var = tk.StringVar(
             value=self.config.get("local_library_root", DEFAULT_CONFIG["local_library_root"])
@@ -712,24 +714,41 @@ class App(tk.Tk):
         ttk.Label(
             frm, text="(unused in Local mode)", foreground="#888888"
         ).grid(row=2, column=2, sticky="w", padx=(6, 0), pady=(6, 0))
+        ttk.Label(frm, text="Media library root (on Deluge host):").grid(
+            row=3, column=0, sticky="w", pady=(6, 0)
+        )
+        ttk.Entry(frm, textvariable=self.set_remote_root_var).grid(
+            row=3, column=1, sticky="ew", padx=6, pady=(6, 0)
+        )
+        ttk.Label(
+            frm, text="(unused in Local mode)", foreground="#888888"
+        ).grid(row=3, column=2, sticky="w", padx=(6, 0), pady=(6, 0))
+        ttk.Label(
+            frm,
+            text="Path on the Deluge/media-server box containing Movies/ and TV/ "
+                 "(e.g. /mnt/media) — series sends build their destination from it.",
+            foreground="#888888", wraplength=680, justify="left",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         ttk.Separator(frm, orient="horizontal").grid(
-            row=3, column=0, columnspan=3, sticky="ew", pady=(10, 8)
+            row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8)
         )
         ttk.Checkbutton(
             frm,
             text="Local mode (BitDVR runs on the same host as the media server)",
             variable=self.set_local_mode_var, command=self._on_local_mode_toggle,
-        ).grid(row=4, column=0, columnspan=3, sticky="w")
-        ttk.Label(frm, text="Plex library path:").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=6, column=0, columnspan=3, sticky="w")
+        ttk.Label(frm, text="Media library root (this machine):").grid(
+            row=7, column=0, sticky="w", pady=(6, 0)
+        )
         self.set_local_library_entry = ttk.Entry(frm, textvariable=self.set_local_library_var)
-        self.set_local_library_entry.grid(row=5, column=1, sticky="ew", padx=6, pady=(6, 0))
+        self.set_local_library_entry.grid(row=7, column=1, sticky="ew", padx=6, pady=(6, 0))
         ttk.Label(
             frm,
             text="Root containing Movies/ and TV/ — Organize writes straight here "
                  "instead of the local staging Library/, and Send/Clean are hidden.",
             foreground="#888888", wraplength=680, justify="left",
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self._on_local_mode_toggle()
 
         ttk.Button(parent, text="Save", command=self._on_settings_save).pack(pady=(4, 12))
@@ -812,8 +831,8 @@ class App(tk.Tk):
         except (ValueError, TypeError):
             messagebox.showerror("Import failed", "Imported OBS port is not a valid port number.")
             return
-        if not str(candidate.get("obs_host", "")).strip() or not str(candidate.get("plex_host", "")).strip():
-            messagebox.showerror("Import failed", "Imported settings are missing an OBS host or Deluge host.")
+        if not str(candidate.get("obs_host", "")).strip():
+            messagebox.showerror("Import failed", "Imported settings are missing an OBS host.")
             return
 
         self.config = candidate
@@ -821,6 +840,7 @@ class App(tk.Tk):
         self.set_obs_host_var.set(self.config["obs_host"])
         self.set_obs_port_var.set(str(self.config["obs_port"]))
         self.set_plex_host_var.set(self.config["plex_host"])
+        self.set_remote_root_var.set(self.config.get("remote_library_root", ""))
         self.set_local_mode_var.set(self.config.get("local_mode", False))
         self.set_local_library_var.set(
             self.config.get("local_library_root", DEFAULT_CONFIG["local_library_root"])
@@ -832,14 +852,16 @@ class App(tk.Tk):
     def _on_settings_save(self):
         host = self.set_obs_host_var.get().strip()
         plex_host = self.set_plex_host_var.get().strip()
+        remote_library_root = self.set_remote_root_var.get().strip()
         local_mode = self.set_local_mode_var.get()
         local_library_root = self.set_local_library_var.get().strip()
-        if not host or not plex_host:
-            messagebox.showerror("Missing fields", "OBS host and Plex box host can't be empty.")
+        if not host:
+            messagebox.showerror("Missing field", "OBS host can't be empty.")
             return
         if local_mode and not local_library_root:
             messagebox.showerror(
-                "Missing field", "Plex library path can't be empty when Local mode is enabled."
+                "Missing field",
+                "The media library root can't be empty when Local mode is enabled.",
             )
             return
         try:
@@ -856,8 +878,9 @@ class App(tk.Tk):
             "obs_host": host,
             "obs_port": port,
             "plex_host": plex_host,
+            "remote_library_root": remote_library_root,
             "local_mode": local_mode,
-            "local_library_root": local_library_root or DEFAULT_CONFIG["local_library_root"],
+            "local_library_root": local_library_root,
         }
         save_config(self.config)
         self._apply_local_mode()
@@ -865,13 +888,13 @@ class App(tk.Tk):
 
     def _on_change_obs_password(self):
         self._change_secret(
-            OBS_SECRET_SERVICE, "obs-websocket", "OBS WebSocket (Snow)",
+            OBS_SECRET_SERVICE, "obs-websocket", "BitDVR OBS WebSocket",
             "New OBS WebSocket server password:",
         )
 
     def _on_change_deluge_password(self):
         self._change_secret(
-            SECRET_SERVICE, "deluge-web", "Deluge-web (Plex box)",
+            SECRET_SERVICE, "deluge-web", "BitDVR deluge-web",
             "New deluge-web password:",
         )
 
@@ -1192,8 +1215,23 @@ class App(tk.Tk):
         if not values:
             return None
         kind, path, series_name, season_name, label = values
-        plex_root = PLEX_ROOTS[label]
         label_disp = "Movies" if label == "movies" else "TV"
+        # Series-shaped sends need the media library root on the Deluge
+        # host to build their --move-to path; a flat file send doesn't
+        # (the Deluge label's own default path handles it).
+        remote_root = str(self.config.get("remote_library_root", "")).strip().rstrip("/")
+        plex_root = f"{remote_root}/{label_disp}" if remote_root else None
+        if plex_root is None and kind != "file":
+            return {
+                "kind": kind,
+                "path": path,
+                "cmd": None,
+                "detail": (
+                    "Series items need the media library root (Settings tab) to "
+                    "build their destination path on the Deluge host. Set it, "
+                    "save, and reselect. Copy Magnet Link still works."
+                ),
+            }
 
         if kind == "file":
             return {
@@ -1250,7 +1288,7 @@ class App(tk.Tk):
                     f"⚠ Will bundle the ENTIRE series '{series_name}' ({file_count} files, "
                     f"everything under it) into ONE torrent → {label_disp}/ root. Only safe "
                     f"as a one-time full send — sending this series again later risks a "
-                    f"duplicate nested folder on the Plex box. Prefer sending season-by-season "
+                    f"duplicate nested folder on the media server. Prefer sending season-by-season "
                     f"if you'll add more later."
                 ),
             }
@@ -1263,13 +1301,19 @@ class App(tk.Tk):
             self.magnet_btn.configure(state="disabled")
             self.send_details_var.set("Select a file, season, or series to send.")
         else:
-            self.send_btn.configure(state="normal")
+            self.send_btn.configure(state="normal" if plan["cmd"] else "disabled")
             self.magnet_btn.configure(state="normal")
             self.send_details_var.set(plan["detail"])
 
     def _on_send(self):
         plan = self._selected_send_plan()
-        if plan is None:
+        if plan is None or plan["cmd"] is None:
+            return
+        if not str(self.config.get("plex_host", "")).strip():
+            messagebox.showerror(
+                "Deluge host not set",
+                "Set the Deluge Host IP in the Settings tab before sending.",
+            )
             return
         if not SYNC_SCRIPT.is_file():
             messagebox.showerror("Missing script", f"Not found: {SYNC_SCRIPT}")
@@ -1324,9 +1368,9 @@ class App(tk.Tk):
 
         ttk.Label(
             parent,
-            text="Files already sent to Plex (archived under Library/.sent/). "
-                 "Removing one deletes the local copy here on Snow and stops "
-                 "seeding it, if it's still active — Plex's own copy is untouched.",
+            text="Files already sent (archived under Library/.sent/). "
+                 "Removing one deletes the local copy on this machine and stops "
+                 "seeding it, if it's still active — the media server's copy is untouched.",
             foreground="#888888", wraplength=680, justify="left",
         ).pack(fill="x", padx=8, pady=(4, 0))
 
@@ -1482,7 +1526,7 @@ class App(tk.Tk):
             self._get_or_prompt_secret(
                 SECRET_SERVICE,
                 "deluge-web",
-                "Deluge-web (Plex box)",
+                "BitDVR deluge-web",
                 "deluge-web password (stored in the login keyring):",
             )
             is not None

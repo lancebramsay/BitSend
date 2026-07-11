@@ -1,6 +1,6 @@
-#!/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3
+#!/usr/bin/env python3
 # Persistent libtorrent seed daemon for BitDVR — replaces transmission-daemon.
-# Deluge on the Plex box is itself built on libtorrent; seeding with the
+# Deluge on the receiving box is itself built on libtorrent; seeding with
 # same library removes Transmission's independent BT implementation from
 # the picture (see bitdvr-sync.sh for why that mattered).
 #
