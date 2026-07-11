@@ -57,8 +57,8 @@ behind it, and the full disclaimer. Good starting points:
 ## Getting started
 
 ```sh
-git clone https://github.com/<you>/bitdvr.git
-cd bitdvr
+git clone https://github.com/lancebramsay/BitDVR.git
+cd BitDVR
 ./install.sh
 ```
 
@@ -75,9 +75,15 @@ Then head to the **[User Guide](docs/README.md)**:
 - [Advanced setup](docs/advanced-setup.md) — configuring Plex/Jellyfin
   libraries and the Deluge BitTorrent client
 
+Questions, setup help, and ideas are welcome in
+[Discussions](https://github.com/lancebramsay/BitDVR/discussions);
+reproducible bugs belong in
+[Issues](https://github.com/lancebramsay/BitDVR/issues).
+
 ## Requirements at a glance
 
-- Linux with a desktop session (macOS support is planned)
+- Linux with a desktop session
+  ([macOS support is planned](https://github.com/lancebramsay/BitDVR/discussions/2))
 - [OBS Studio](https://obsproject.com/) 28+ (obs-websocket built in)
 - Python 3 with Tkinter
 - [libtorrent](https://libtorrent.org/) Python bindings and `jq`
