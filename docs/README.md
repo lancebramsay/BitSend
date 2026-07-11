@@ -89,10 +89,10 @@ staging library are kept unless you pass `--purge-config` /
 `--purge-library`, both of which ask before deleting anything.
 
 Prefer doing it by hand, or on a distro the installer doesn't know?
-It's all plain scripts: copy `bitdvr-*.py`, `bitdvr-*.sh`, and
-`vendor/` into `~/.local/bin`, make sure `python3` has Tkinter (plus
-libtorrent for the network path), and — for the network path — set up
-the seed daemon service shown in
+It's all plain scripts: copy the contents of `src/` (the `bitdvr-*`
+scripts and `vendor/`) into `~/.local/bin`, make sure `python3` has
+Tkinter (plus libtorrent for the network path), and — for the network
+path — set up the seed daemon service shown in
 [Network path: the seed daemon](network-mode.md#the-seed-daemon).
 
 ## First run

@@ -93,5 +93,5 @@ BitDVR is free and open source under the
 [GNU General Public License v3.0](LICENSE). It comes with **no
 warranty** and its authors accept **no liability** for how it is used
 (GPL-3.0 §§15–16). Vendored dependencies keep their own licenses:
-[`obsws-python`](vendor/obsws_python/LICENSE) (GPL-3.0),
-[`websocket-client`](vendor/websocket/LICENSE) (Apache-2.0).
+[`obsws-python`](src/vendor/obsws_python/LICENSE) (GPL-3.0),
+[`websocket-client`](src/vendor/websocket/LICENSE) (Apache-2.0).

@@ -47,7 +47,7 @@ die()  { echo "error: $*" >&2; exit 1; }
 
 [[ "$(uname -s)" == "Darwin" ]] && die "macOS isn't supported yet — BitDVR currently depends on Linux-only tools (secret-tool, ip). See the README roadmap."
 [[ "${EUID}" -eq 0 ]] && die "run this as your normal user, not root — everything installs into your own home directory"
-[[ -f "$REPO_DIR/bitdvr-gui.py" ]] || die "run this from a BitDVR checkout (bitdvr-gui.py not found next to install.sh)"
+[[ -f "$REPO_DIR/src/bitdvr-gui.py" ]] || die "run this from a BitDVR checkout (src/bitdvr-gui.py not found next to install.sh)"
 
 # ---------------------------------------------------------------- packages
 
@@ -158,10 +158,10 @@ info "Installing BitDVR to $BIN_DIR"
 mkdir -p "$BIN_DIR"
 for f in bitdvr-gui.py bitdvr-organize.sh bitdvr-sync.sh bitdvr-magnet.sh \
          bitdvr-create-torrent.py bitdvr-magnet-uri.py bitdvr-libtorrent-daemon.py; do
-    install -m 0755 "$REPO_DIR/$f" "$BIN_DIR/$f"
+    install -m 0755 "$REPO_DIR/src/$f" "$BIN_DIR/$f"
 done
 rm -rf "$BIN_DIR/vendor"
-cp -r "$REPO_DIR/vendor" "$BIN_DIR/vendor"
+cp -r "$REPO_DIR/src/vendor" "$BIN_DIR/vendor"
 find "$BIN_DIR/vendor" -type d -name __pycache__ -exec rm -rf {} +
 
 # Pin interpreters in the installed copies (repo copies stay generic).
