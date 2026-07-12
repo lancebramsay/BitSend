@@ -58,20 +58,40 @@ class Bitdvr < Formula
 
     # A minimal BitDVR.app so the GUI lives in the Dock like a real app —
     # the macOS counterpart of the .desktop entry install.sh writes on
-    # Linux. The launcher execs the pinned interpreter without forking,
-    # so the running process keeps this bundle's identity and the Dock
-    # shows BitDVR's name and television icon instead of a generic
-    # "Python". Users symlink it into ~/Applications (see caveats) —
-    # a symlink to opt_prefix survives upgrades, a copy wouldn't.
+    # Linux. Users symlink it into ~/Applications (see caveats) — a
+    # symlink to opt_prefix survives upgrades, a copy wouldn't.
+    #
+    # The Dock takes the process's name/icon from the bundle enclosing
+    # its EXECUTABLE, not from whatever bundle launched it — and
+    # Homebrew's bin/python3.x is a stub that re-execs the interpreter
+    # inside Python.framework's own Python.app, so any exec-the-python
+    # launcher ends up branded as a generic "Python". Instead, a copy of
+    # the real interpreter binary lives inside this bundle: it links
+    # libpython by absolute path (retargeted from the version-pinned
+    # Cellar path to the stable opt path so python patch upgrades don't
+    # strand it, then ad-hoc re-signed since install_name_tool
+    # invalidates the arm64 signature), and PYTHONHOME points it at the
+    # framework it was separated from.
     return unless OS.mac?
+
+    python_keg = Formula["python@3.14"]
+    pyhome = python_keg.opt_prefix/"Frameworks/Python.framework/Versions/3.14"
 
     app = prefix/"BitDVR.app"
     (app/"Contents/MacOS").mkpath
+    app_python = app/"Contents/MacOS/BitDVR-python"
+    cp pyhome/"Resources/Python.app/Contents/MacOS/Python", app_python
+    system "install_name_tool", "-change",
+           python_keg.prefix/"Frameworks/Python.framework/Versions/3.14/Python",
+           pyhome/"Python", app_python
+    system "codesign", "-f", "-s", "-", app_python
     (app/"Contents/MacOS/BitDVR").write <<~SH
       #!/bin/bash
-      exec "#{opt_libexec}/bitdvr-gui.py" "$@"
+      HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      export PYTHONHOME="#{pyhome}"
+      exec "$HERE/BitDVR-python" "#{opt_libexec}/bitdvr-gui.py" "$@"
     SH
-    chmod 0755, app/"Contents/MacOS/BitDVR"
+    chmod 0755, [app/"Contents/MacOS/BitDVR", app_python]
     (app/"Contents/Resources").install "docs/assets/bitdvr.icns"
     (app/"Contents/Info.plist").write <<~XML
       <?xml version="1.0" encoding="UTF-8"?>
