@@ -69,9 +69,14 @@ Additionally, for the **network path** only:
 
 ```sh
 brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+brew trust lancebramsay/bitdvr
 brew install --HEAD bitdvr
 brew install --cask obs   # if you don't have OBS Studio yet
 ```
+
+(`brew trust` is Homebrew's standard confirmation step for any tap
+outside homebrew-core — it marks this tap's formulas as ones you've
+chosen to install.)
 
 This installs BitDVR plus all its dependencies (Python with Tkinter,
 libtorrent, jq) and puts `bitdvr` on your PATH — run it to launch the

@@ -48,6 +48,7 @@ die()  { echo "error: $*" >&2; exit 1; }
 if [[ "$(uname -s)" == "Darwin" ]]; then
     die "on macOS, install through Homebrew instead:
     brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+    brew trust lancebramsay/bitdvr
     brew install --HEAD bitdvr"
 fi
 [[ "${EUID}" -eq 0 ]] && die "run this as your normal user, not root — everything installs into your own home directory"

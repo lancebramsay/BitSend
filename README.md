@@ -68,6 +68,7 @@ cd BitDVR
 
 ```sh
 brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+brew trust lancebramsay/bitdvr
 brew install --HEAD bitdvr
 brew install --cask obs   # if you don't have OBS Studio yet
 bitdvr

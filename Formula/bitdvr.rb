@@ -1,6 +1,7 @@
 # BitDVR Homebrew formula — the repo itself is the tap:
 #
 #   brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+#   brew trust lancebramsay/bitdvr
 #   brew install --HEAD bitdvr
 #
 # Head-only until the first tagged GitHub release; when one exists, add
