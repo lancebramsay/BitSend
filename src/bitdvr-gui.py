@@ -1131,7 +1131,7 @@ class App(tk.Tk):
         )
         ttk.Label(
             self.org_year_row,
-            text='— Plex matches movies more reliably as "Title (Year)"',
+            text='— media servers match movies more reliably as "Title (Year)"',
             foreground="#888888",
         ).pack(side="left")
 
@@ -1166,9 +1166,9 @@ class App(tk.Tk):
         ttk.Label(
             parent,
             text="Nothing here is required — anything left blank is simply left out of "
-                 "the resulting name/path. Season+Episode use Plex's S01E02 pattern so "
-                 "its scanner recognizes them; leaving both blank means Plex may not "
-                 "match the file at all.",
+                 "the resulting name/path. Season+Episode use the S01E02 pattern "
+                 "media-server scanners key on; leaving both blank means the scanner "
+                 "may not match the file at all.",
             foreground="#888888", wraplength=680, justify="left",
         ).pack(anchor="w", padx=8, pady=(4, 4))
 
@@ -1309,7 +1309,7 @@ class App(tk.Tk):
         btn_row = ttk.Frame(parent)
         btn_row.pack(pady=8)
         self.send_btn = ttk.Button(
-            btn_row, text="Send to Plex", command=self._on_send, state="disabled"
+            btn_row, text="Send to Server", command=self._on_send, state="disabled"
         )
         self.send_btn.pack(side="left", padx=4)
         self.magnet_btn = ttk.Button(
@@ -1641,7 +1641,7 @@ class App(tk.Tk):
         if not messagebox.askyesno(
             "Remove sent files?",
             f"Permanently delete this {'file' if kind == 'file' else kind}?\n\n{p}\n\n"
-            "This cannot be undone. Plex's own copy is not affected.",
+            "This cannot be undone. Your media server's copy is not affected.",
         ):
             return
 

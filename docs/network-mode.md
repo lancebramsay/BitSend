@@ -95,7 +95,7 @@ what will happen before you click anything:
   merging. New episodes for an already-sent series should go
   individually or by season instead — those merge cleanly every time.
 
-**Send to Plex** runs the whole pipeline: the item is archived to
+**Send to Server** runs the whole pipeline: the item is archived to
 `Library/.sent/`, a private trackerless torrent is built, the seed
 daemon starts seeding, and Deluge on the server is handed the torrent,
 the label, and the seeder's address. On a wired LAN the transfer
