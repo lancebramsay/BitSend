@@ -125,10 +125,13 @@ class Bitdvr < Formula
     <<~EOS
       Launch the app with:  bitdvr
 
-      To launch from the Dock instead, link the app bundle into
-      ~/Applications and open it from there (or via Spotlight):
+      For a permanent Dock launcher, link the app bundle into
+      ~/Applications:
         ln -sfn "#{opt_prefix}/BitDVR.app" ~/Applications/BitDVR.app
-      then right-click its Dock icon -> Options -> Keep in Dock.
+      then drag BitDVR.app from ~/Applications onto the Dock (or open
+      it and right-click its Dock icon -> Options -> Keep in Dock).
+      Spotlight doesn't index symlinked apps — use the Dock, Finder,
+      or the `bitdvr` command.
 
       BitDVR drives OBS Studio 28+, installed separately:
         brew install --cask obs

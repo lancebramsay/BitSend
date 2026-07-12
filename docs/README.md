@@ -91,8 +91,11 @@ your Dock with its own name and icon. Link it into `~/Applications`:
 ln -sfn "$(brew --prefix)/opt/bitdvr/BitDVR.app" ~/Applications/BitDVR.app
 ```
 
-Open it from there (or via Spotlight), then right-click its Dock icon →
-*Options → Keep in Dock*. The symlink stays valid across `brew upgrade`.
+To put a permanent launcher in the Dock, drag `BitDVR.app` from
+`~/Applications` onto the Dock (or open the app and right-click its
+Dock icon → *Options → Keep in Dock*). The symlink stays valid across
+`brew upgrade`. Note that Spotlight doesn't index symlinked apps —
+launch it from the Dock, Finder, or the `bitdvr` command.
 
 For the [network path](network-mode.md) only, the seed daemon runs as a
 launchd service managed by Homebrew:
