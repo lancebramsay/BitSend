@@ -127,7 +127,12 @@ picks up where things left off.
   (`systemctl --user status bitdvr-libtorrent-daemon`; macOS:
   `brew services info bitdvr`) and that the two
   machines can reach each other (`ping`, and port `51413` open in the
-  recording machine's firewall for LAN traffic).
+  recording machine's firewall for LAN traffic). Note that the
+  connection works in either direction: the daemon also dials out to
+  Deluge's own peer port, so sends still work on segmented/VLAN'd
+  networks where inbound connections to the recording machine are
+  blocked — as long as the recording machine can reach the server
+  (which deluge-web on port `8112` already proves).
 - **File landed but in the wrong folder** — the Deluge labels do the
   filing; verify the `movies`/`tv` label configuration in
   [Advanced setup](advanced-setup.md#deluge).

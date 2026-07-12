@@ -203,11 +203,12 @@ TORRENT_FILE="$TORRENT_DIR/${NAME}.torrent"
 echo "==> Creating torrent for $NAME (private, no trackers)..."
 "$PYTHON" "$SCRIPT_DIR/bitdvr-create-torrent.py" --private -o "$TORRENT_FILE" "$SRC_PATH"
 
-echo "==> Seeding locally via bitdvr-libtorrent-daemon..."
-mkdir -p "$SEED_WATCH_DIR"
-WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
-jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
-cp "$TORRENT_FILE" "$WATCH_TORRENT"
+# NOTE: the seed-daemon handoff happens further down, AFTER Deluge has
+# the torrent fully configured (label + move path) — the daemon dials
+# Deluge within seconds of the sidecar appearing, and the transfer can
+# complete near-instantly on a LAN, so Deluge-side setup must already be
+# in place by then (same race that used to bite label.set_torrent, see
+# the label comment below).
 
 # This machine's LAN IP on whatever interface routes to the Deluge host
 # — `ip route get` on Linux; macOS has no `ip`, so ask its routing table
@@ -270,6 +271,12 @@ ADD_RESP=$(deluge_rpc "core.add_torrent_file" "$(jq -nc --arg name "${NAME}.torr
 TORRENT_ID=$(echo "$ADD_RESP" | jq -r '.result // empty')
 if [[ -z "$TORRENT_ID" || "$TORRENT_ID" == "false" ]]; then
     echo "error: failed to add torrent: $ADD_RESP" >&2
+    # Still hand off to the seed daemon (no peer hint — there's nothing
+    # to dial), so the manual fallback below actually has a live seed.
+    mkdir -p "$SEED_WATCH_DIR"
+    WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
+    jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
+    cp "$TORRENT_FILE" "$WATCH_TORRENT"
     echo "Fallback: open $DELUGE_WEB_URL manually, add $TORRENT_FILE, then add peer $LOCAL_IP:$PEER_PORT to it." >&2
     exit 1
 fi
@@ -296,6 +303,29 @@ if [[ -n "$MOVE_TO" ]]; then
     echo "    $MOVE_RESP"
     echo "    (Deluge should create $MOVE_TO if it doesn't exist yet — unverified against the live box, watch deluge-web to confirm.)"
 fi
+
+# Hand off to the seed daemon, with Deluge's own peer port in the
+# sidecar so the daemon dials OUT to Deluge as well as accepting inbound.
+# The outbound direction is what makes sends work on segmented LANs
+# where clients may open connections to the server VLAN but not the
+# reverse — there, core.connect_peer below asks Deluge to dial a port it
+# can never reach, and without this hint the transfer sits at 0 seeds
+# forever. Either side reaching the other is sufficient; on open LANs
+# both work and whichever lands first wins. If get_listen_port fails
+# (very old Deluge), the sidecar just omits the hint and behavior is
+# the old inbound-only one.
+DELUGE_PEER_PORT=$(deluge_rpc "core.get_listen_port" "[]" | jq -r '.result // empty')
+echo "==> Seeding locally via bitdvr-libtorrent-daemon..."
+mkdir -p "$SEED_WATCH_DIR"
+WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
+if [[ -n "$DELUGE_PEER_PORT" ]]; then
+    echo "    (daemon will also dial Deluge at $PLEX_HOST:$DELUGE_PEER_PORT)"
+    jq -nc --arg save_path "$(dirname "$SRC_PATH")" --arg peer "$PLEX_HOST:$DELUGE_PEER_PORT" \
+        '{save_path: $save_path, peers: [$peer]}' > "$WATCH_TORRENT.json"
+else
+    jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
+fi
+cp "$TORRENT_FILE" "$WATCH_TORRENT"
 
 echo "==> Connecting this machine as a direct peer..."
 # core.connect_peer(torrent_id, ip, port) takes ip and port as separate

@@ -12,6 +12,14 @@
 # this should only ever be reachable on the LAN, matching the old
 # transmission-daemon's lockdown.
 #
+# The sidecar may also carry peers: ["ip:port", ...] (bitdvr-sync.sh
+# writes Deluge's own listen port there) — those are dialed OUTBOUND on
+# add, and re-dialed periodically while the torrent has no connected
+# peers. This is what makes sends work on segmented LANs where the
+# recording machine may open connections to the server VLAN but inbound
+# connections back to it are dropped: waiting to be dialed would mean
+# 0 seeds forever, dialing out works in both worlds.
+#
 # Tracked by (filename, mtime) pairs, not filename alone — a resend using
 # the same organized title (same watch-dir filename) overwrites the file
 # with genuinely different content (a different info-hash), and keying
@@ -43,7 +51,17 @@ def main():
         "alert_mask": lt.alert_category.status | lt.alert_category.error | lt.alert_category.peer,
     })
 
-    handles = {}  # name -> (mtime, handle)
+    def dial_peers(handle, peers, name):
+        for peer in peers:
+            ip, _, port = peer.rpartition(":")
+            try:
+                handle.connect_peer((ip, int(port)))
+                print(f"dialing peer {peer} for {name}", flush=True)
+            except (ValueError, RuntimeError) as e:
+                print(f"bad peer hint {peer!r} for {name}: {e}", flush=True)
+
+    handles = {}  # name -> (mtime, handle, peers)
+    loops = 0
     while True:
         current = {}
         for f in os.listdir(WATCH_DIR):
@@ -73,13 +91,26 @@ def main():
                 "save_path": meta["save_path"],
                 "flags": lt.torrent_flags.seed_mode,
             })
-            handles[name] = (mtime, h)
+            peers = meta.get("peers") or []
+            handles[name] = (mtime, h, peers)
             print(f"seeding: {info.name()} from {meta['save_path']}", flush=True)
+            dial_peers(h, peers, name)
 
         for name in set(handles) - set(current):
-            _, h = handles.pop(name)
+            _, h, _ = handles.pop(name)
             ses.remove_torrent(h)
             print(f"stopped seeding: {name}", flush=True)
+
+        # Re-dial hinted peers for torrents that still have nobody
+        # connected — the first dial can land before the other side has
+        # finished checking the torrent, and a dropped connection would
+        # otherwise never be retried (there's no tracker or DHT to
+        # rediscover anyone here).
+        loops += 1
+        if loops % 30 == 0:  # every ~60s at the 2s cadence
+            for name, (_, h, peers) in handles.items():
+                if peers and h.status().num_peers == 0:
+                    dial_peers(h, peers, name)
 
         for alert in ses.pop_alerts():
             print(alert, flush=True)
