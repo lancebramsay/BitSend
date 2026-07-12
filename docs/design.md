@@ -100,6 +100,17 @@ The client library (`obsws-python`, with its dependency
 pip-installed — both are small and pure Python, and bundling them
 (licenses included) means installation never touches PyPI.
 
+Configuring OBS follows the same restraint. The two settings BitDVR
+requires (recording path, mkv container) are applied by a setup button
+that shows the exact diff and waits for a yes; scenes and sources are
+never touched. Everything else — encoder, quality, canvas — stays the
+user's unless they opt into a *quality preset*, which routes
+known-good recording settings for their display (resolution, 30 fps,
+hardware HEVC at constant quality) through that same show-then-confirm
+flow. One wrinkle is absorbed here: OBS reads its rate-control setting
+only at launch, so when a preset needs to change it, BitDVR offers —
+again explicitly — to quit OBS, write the setting, and relaunch.
+
 Recording is hands-off in two independent ways, both optional:
 
 - **Auto-stop timer** — grab the runtime of whatever the desktop's

@@ -25,9 +25,10 @@
 #     entirely and doesn't archive the source file — an ad hoc way to
 #     pull a recording into any Deluge/qBittorrent/Transmission client on
 #     the LAN instead of the automated Plex send.
-#   Settings — OBS WebSocket host/port, the Deluge host, and the library
-#     roots, persisted to ~/.config/bitdvr/config.json (not the keyring —
-#     these aren't secret). Also holds "Change Password" actions for the
+#   Settings — OBS WebSocket host/port, the Deluge host, the library
+#     roots, and the opt-in OBS quality preset, persisted to
+#     ~/.config/bitdvr/config.json (not the keyring — these aren't
+#     secret). Also holds "Change Password" actions for the
 #     two keyring secrets below, since the normal prompt flow only fires
 #     when nothing is stored yet. The Deluge host is threaded through to
 #     bitdvr-sync.sh via the BITDVR_PLEX_HOST env var rather than a CLI
@@ -44,9 +45,11 @@
 # JSON endpoint can), so its keyring password is fetched the same way but
 # used directly by the obsws_python client.
 
+import configparser
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -101,6 +104,7 @@ DEFAULT_CONFIG = {
     "local_mode": False,
     "local_library_root": "",
     "hide_from_capture": True,  # macOS only; ignored on Linux
+    "obs_preset": "",  # key into OBS_PRESETS, or "" for hands-off
     "schedules": [],  # [{start: "YYYY-MM-DD HH:MM", minutes, seconds, title}]
 }
 
@@ -108,6 +112,130 @@ DEFAULT_CONFIG = {
 # opened a few minutes after the start time) before it counts as missed.
 SCHED_GRACE_SECONDS = 300
 SCHED_START_FMT = "%Y-%m-%d %H:%M"
+
+# --------------------------------------------------------------- OBS presets
+#
+# Opt-in quality presets for "Set Up OBS": each pins the canvas/output
+# resolution for a kind of display, plus 30 fps and (macOS) the hardware
+# HEVC encoder in CRF mode. Keyed by the "obs_preset" config value; ""
+# means hands-off — the button then only applies path and format, as it
+# always has. Display-relative presets ask the OS for the main display's
+# native pixel size at apply time, so a laptop that later docks to a
+# monitor just needs the button clicked again.
+OBS_PRESETS = {
+    "laptop": "Laptop built-in display — record as-is at native resolution",
+    "match1080": "Match display, cap output at 1080p",
+    "1080p": "1080p (16:9 display)",
+    "1440p": "1440p (16:9 display)",
+    "4k": "4K (16:9 display)",
+}
+OBS_PRESET_FIXED_RES = {
+    "1080p": (1920, 1080),
+    "1440p": (2560, 1440),
+    "4k": (3840, 2160),
+}
+OBS_PRESET_FPS = 30
+OBS_HEVC_ENCODER_MACOS = "com.apple.videotoolbox.videoencoder.ave.hevc"
+# Apple VT's "CRF" quality is a 0-100 slider where higher is better
+# (unlike x264's 0-51-lower-is-better CRF); 60 is OBS's own default and
+# lands around 6-10 Mbps for 1080p30 video content.
+OBS_CRF_QUALITY = 60
+
+
+def detect_display_resolution():
+    """Native pixel size (w, h) of the main display, or None if it can't
+    be determined. macOS: system_profiler (the only interface that
+    reports true pixels rather than the scaled 'looks like' size).
+    Linux: xrandr's primary output; Wayland sessions without XWayland
+    fall through to None and the caller skips resolution changes."""
+    try:
+        if IS_MACOS:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType", "-json"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                return None
+            displays = []
+            for gpu in json.loads(result.stdout).get("SPDisplaysDataType", []):
+                displays.extend(gpu.get("spdisplays_ndrvs", []))
+            main = next(
+                (d for d in displays
+                 if d.get("spdisplays_main") == "spdisplays_yes"),
+                displays[0] if displays else None,
+            )
+            if main is None:
+                return None
+            m = re.match(r"(\d+)\s*x\s*(\d+)", main.get("_spdisplays_pixels", ""))
+            return (int(m.group(1)), int(m.group(2))) if m else None
+        result = subprocess.run(
+            ["xrandr", "--current"], capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        m = re.search(r" connected primary (\d+)x(\d+)", result.stdout)
+        if m is None:
+            m = re.search(r" connected (?:\w+ )?(\d+)x(\d+)", result.stdout)
+        return (int(m.group(1)), int(m.group(2))) if m else None
+    except Exception:
+        return None
+
+
+def preset_video_settings(preset, native):
+    """(base_w, base_h, out_w, out_h) for a preset, given the detected
+    native display size (or None). Returns None when the preset needs
+    the display size and detection failed."""
+    if preset in OBS_PRESET_FIXED_RES:
+        w, h = OBS_PRESET_FIXED_RES[preset]
+        return (w, h, w, h)
+    if native is None:
+        return None
+    w, h = native
+    if preset == "match1080" and w > 1920:
+        # Keep the display's aspect; encoders want even dimensions.
+        return (w, h, 1920, round(h * 1920 / w / 2) * 2)
+    return (w, h, w, h)
+
+
+def obs_record_encoder_file():
+    """Path to the active OBS profile's recordEncoder.json — the one
+    recording setting (rate control) obs-websocket can't reach: OBS only
+    reads the file at launch and rewrites it on exit. The active profile
+    directory is named in user.ini (OBS 31+) or global.ini (older).
+    Returns None if OBS's config can't be located."""
+    if IS_MACOS:
+        base = Path.home() / "Library" / "Application Support" / "obs-studio"
+    else:
+        base = Path(
+            os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+        ) / "obs-studio"
+    for ini in ("user.ini", "global.ini"):
+        path = base / ini
+        if not path.is_file():
+            continue
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        try:
+            parser.read_string(path.read_text())
+        except (configparser.Error, OSError):
+            continue
+        profile_dir = parser.get("Basic", "ProfileDir", fallback=None)
+        if profile_dir:
+            return base / "basic" / "profiles" / profile_dir / "recordEncoder.json"
+    return None
+
+
+def read_record_encoder_settings():
+    """Current contents of recordEncoder.json as a dict ({} if the file
+    is missing/empty — OBS then uses the encoder's defaults)."""
+    path = obs_record_encoder_file()
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 
 def load_config():
@@ -438,6 +566,7 @@ class App(tk.Tk):
 
         log_frame = ttk.Frame(self)
         log_frame.pack(fill="both", expand=True, padx=8, pady=(8, 6))
+        self.log_frame = log_frame
         self.log_text = tk.Text(
             log_frame,
             wrap="word",
@@ -453,11 +582,6 @@ class App(tk.Tk):
         self.log_text.configure(yscrollcommand=scroll.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-
-        self.status_var = tk.StringVar(value="Idle")
-        ttk.Label(self, textvariable=self.status_var, anchor="w", relief="sunken").pack(
-            fill="x", side="bottom"
-        )
 
         self._load_default_recording()
         self._refresh_tree()
@@ -947,6 +1071,16 @@ class App(tk.Tk):
             self._start_preview()
         else:
             self._stop_preview()
+        # Settings runs no jobs, so its tab drops the log pane and lets
+        # the (scrollable) settings content have that space instead.
+        if not hasattr(self, "log_frame"):
+            return
+        if str(self.notebook.select()) == str(self.settings_tab):
+            self.log_frame.pack_forget()
+            self.notebook.pack_configure(fill="both", expand=True, pady=(8, 6))
+        elif not self.log_frame.winfo_ismapped():
+            self.notebook.pack_configure(fill="x", expand=False, pady=(8, 0))
+            self.log_frame.pack(fill="both", expand=True, padx=8, pady=(8, 6))
 
     def _start_preview(self):
         if self.preview_job is not None or obs is None:
@@ -1124,7 +1258,6 @@ class App(tk.Tk):
         self._record_health_tick = 0
         self.rec_start_btn.configure(state="disabled")
         self.rec_stop_btn.configure(state="normal")
-        self.status_var.set("Recording...")
         if use_timer:
             mins, secs = divmod(total_seconds, 60)
             self._append_log(
@@ -1162,7 +1295,6 @@ class App(tk.Tk):
                 self.rec_start_btn.configure(state="normal")
                 self.rec_stop_btn.configure(state="disabled")
                 self.rec_status_var.set("Idle — lost connection to OBS.")
-                self.status_var.set("Idle")
                 if self.record_log_file:
                     self.record_log_file.close()
                     self.record_log_file = None
@@ -1214,7 +1346,6 @@ class App(tk.Tk):
         self.rec_start_btn.configure(state="normal")
         self.rec_stop_btn.configure(state="disabled")
         self.rec_status_var.set(f"Idle — last recording {reason}.")
-        self.status_var.set("Idle")
         self._notify("BitDVR", f"Recording finished ({reason}).")
 
         if output_path and Path(output_path).is_file():
@@ -1259,7 +1390,87 @@ class App(tk.Tk):
 
     # --------------------------------------------------------------- Settings
 
-    def _build_settings_tab(self, parent):
+    def _make_settings_scrollable(self, tab):
+        """Wrap the Settings tab in a vertically scrolling canvas and
+        return the frame to build its content into. The tab has outgrown
+        small windows, and the notebook sizes itself to its tallest tab —
+        so an overflowing Settings tab was also stealing height from the
+        log pane below on every other tab. The canvas caps what Settings
+        asks for and makes the rest reachable by scrollbar or wheel."""
+        canvas = tk.Canvas(tab, borderwidth=0, highlightthickness=0, height=340)
+        try:
+            canvas.configure(bg=ttk.Style().lookup("TFrame", "background"))
+        except tk.TclError:
+            pass
+        bar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window, width=e.width),
+        )
+        # yscrollincrement=1 makes yview_scroll's "units" mean pixels,
+        # so both notchy wheels and pixel-precise trackpad deltas map
+        # onto the same call.
+        canvas.configure(yscrollincrement=1)
+        self.settings_canvas = canvas
+        # Scroll events are delivered to the widget under the pointer —
+        # in this tab that's usually a child label or entry, never the
+        # canvas itself — so catch them at the "all" bindtag and scroll
+        # only when the target sits inside this canvas.
+        self.bind_all("<MouseWheel>", self._on_settings_wheel)
+        self.bind_all("<Button-4>", self._on_settings_wheel)  # X11 wheel up
+        self.bind_all("<Button-5>", self._on_settings_wheel)  # X11 wheel down
+        # Tk 9 splits trackpad gestures out of <MouseWheel> into their
+        # own event, with both axes packed into one delta word.
+        try:
+            self.bind_all("<TouchpadScroll>", self._on_settings_touchpad)
+        except tk.TclError:  # Tk 8.6 (Linux distros) has no such event
+            pass
+        return inner
+
+    def _settings_scroll_hit(self, event):
+        """True when the event's target widget sits inside the settings
+        canvas (event.widget can be a bare path string for internals
+        like a combobox popdown — those never match, which is right)."""
+        widget = event.widget
+        while widget is not None:
+            if widget is self.settings_canvas:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def _on_settings_wheel(self, event):
+        if not self._settings_scroll_hit(event):
+            return
+        if event.num == 4:  # X11 encodes direction in the button number
+            notches = 1
+        elif event.num == 5:
+            notches = -1
+        else:
+            # Tk 9 normalizes wheel deltas to multiples of 120 on every
+            # platform; older aqua Tk sent raw line counts.
+            delta = event.delta
+            notches = delta / 120 if abs(delta) >= 120 else delta
+        self.settings_canvas.yview_scroll(round(-notches * 40), "units")
+
+    def _on_settings_touchpad(self, event):
+        if not self._settings_scroll_hit(event):
+            return
+        # Same decode and direction Tk 9's own widget bindings use.
+        _dx, dy = self.tk.call("::tk::PreciseScrollDeltas", event.delta)
+        if dy:
+            self.settings_canvas.yview_scroll(-int(dy), "units")
+
+    def _build_settings_tab(self, tab):
+        parent = self._make_settings_scrollable(tab)
         self.set_obs_host_var = tk.StringVar(value=self.config["obs_host"])
         self.set_obs_port_var = tk.StringVar(value=str(self.config["obs_port"]))
         self.set_plex_host_var = tk.StringVar(value=self.config["plex_host"])
@@ -1273,6 +1484,56 @@ class App(tk.Tk):
         self.set_local_library_var = tk.StringVar(
             value=self.config.get("local_library_root", DEFAULT_CONFIG["local_library_root"])
         )
+
+        # Sections run most- to least-revisited: OBS setup (re-run after
+        # hardware changes) up top, one-time hosts/roots in the middle,
+        # passwords and settings-file export at the bottom.
+        obs_frm = ttk.Frame(parent)
+        obs_frm.pack(fill="x", padx=8, pady=(12, 8))
+        ttk.Label(
+            obs_frm,
+            text="One-time OBS setup — applies the two settings BitDVR needs "
+                 "(recording path and .mkv format), after showing you exactly "
+                 "what would change. Scenes and sources always stay yours.",
+            foreground="#888888", wraplength=680, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
+
+        preset_row = ttk.Frame(obs_frm)
+        preset_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(preset_row, text="Quality preset:").pack(side="left")
+        # Combobox shows labels; "" (hands-off) maps to the first entry.
+        self._obs_preset_labels = ["None — leave encoder and quality alone"]
+        self._obs_preset_keys = [""]
+        for key, label in OBS_PRESETS.items():
+            self._obs_preset_keys.append(key)
+            self._obs_preset_labels.append(label)
+        current = self.config.get("obs_preset", "")
+        if current not in self._obs_preset_keys:
+            current = ""
+        self.set_obs_preset_var = tk.StringVar(
+            value=self._obs_preset_labels[self._obs_preset_keys.index(current)]
+        )
+        preset_box = ttk.Combobox(
+            preset_row, textvariable=self.set_obs_preset_var,
+            values=self._obs_preset_labels, state="readonly", width=52,
+        )
+        preset_box.pack(side="left", padx=6)
+        preset_box.bind("<<ComboboxSelected>>", self._on_obs_preset_change)
+        ttk.Label(
+            obs_frm,
+            text="A preset makes the setup button also apply recommended "
+                 "recording settings for that display: matching resolution, "
+                 f"{OBS_PRESET_FPS} fps, and (macOS) the hardware HEVC encoder "
+                 "at constant quality — the biggest file-size levers. On "
+                 "Linux, presets set resolution and fps only; pick your "
+                 "GPU's encoder in OBS per the Basics guide.",
+            foreground="#888888", wraplength=680, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
+        ttk.Button(
+            obs_frm, text="Set Up OBS for BitDVR...", command=self._on_setup_obs,
+        ).pack(anchor="w")
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
 
         frm = ttk.Frame(parent)
         frm.pack(fill="x", padx=8, pady=8)
@@ -1350,21 +1611,6 @@ class App(tk.Tk):
         ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         ttk.Button(parent, text="Save", command=self._on_settings_save).pack(pady=(4, 12))
-
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
-
-        obs_frm = ttk.Frame(parent)
-        obs_frm.pack(fill="x", padx=8, pady=12)
-        ttk.Label(
-            obs_frm,
-            text="One-time OBS setup — applies the two settings BitDVR needs "
-                 "(recording path and .mkv format), after showing you exactly "
-                 "what would change. Encoder, quality, and scenes stay yours.",
-            foreground="#888888", wraplength=680, justify="left",
-        ).pack(anchor="w", pady=(0, 6))
-        ttk.Button(
-            obs_frm, text="Set Up OBS for BitDVR...", command=self._on_setup_obs,
-        ).pack(anchor="w")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
 
@@ -1498,8 +1744,9 @@ class App(tk.Tk):
             "local_mode": local_mode,
             "local_library_root": local_library_root,
             "hide_from_capture": self.set_hide_capture_var.get(),
-            # Not a Settings-tab field — carry the pending schedules
-            # through rather than silently wiping them on every Save.
+            # Saved when the combobox changes, not by this button — carry
+            # it (and the schedules) through rather than wiping on Save.
+            "obs_preset": self.config.get("obs_preset", ""),
             "schedules": self.config.get("schedules", []),
         }
         save_config(self.config)
@@ -1518,13 +1765,22 @@ class App(tk.Tk):
         "pipewire-screen-capture-source",
     }
 
+    def _on_obs_preset_change(self, _event=None):
+        label = self.set_obs_preset_var.get()
+        self.config["obs_preset"] = self._obs_preset_keys[
+            self._obs_preset_labels.index(label)
+        ]
+        save_config(self.config)
+
     def _on_setup_obs(self):
         """Apply the two OBS settings BitDVR requires — recording path
-        and mkv container — to the current OBS profile, but only after
-        showing exactly what would change and getting a yes. OBS is a
-        shared tool (people stream with it); nothing here may happen
-        silently, and matters of taste (encoder, quality, canvas,
-        scenes) are never touched."""
+        and mkv container — plus, when the user has opted into a quality
+        preset, that preset's resolution/fps/encoder, to the current OBS
+        profile; but only after showing exactly what would change and
+        getting a yes. OBS is a shared tool (people stream with it);
+        nothing here may happen silently, scenes and sources are never
+        touched, and without a preset selected encoder/quality/canvas
+        stay untouched too."""
         client = self._get_obs_client()
         if client is None:
             return
@@ -1534,6 +1790,18 @@ class App(tk.Tk):
                     "Recording in progress",
                     "OBS is recording right now — stop that recording first, "
                     "since these settings apply to new recordings.",
+                )
+                return
+            # A preset changes canvas/fps, which OBS refuses while any
+            # output runs — and yanking resolution mid-stream would be
+            # hostile anyway.
+            if self.config.get("obs_preset", "") and (
+                client.get_stream_status().output_active
+            ):
+                messagebox.showwarning(
+                    "Streaming in progress",
+                    "OBS is streaming right now — the quality preset changes "
+                    "resolution and encoder, so stop the stream first.",
                 )
                 return
 
@@ -1562,6 +1830,81 @@ class App(tk.Tk):
                 if fix_fmt else "Recording format:  mkv  ✓ already set",
             ]
 
+            # ------------------------------------------- quality preset
+            preset = self.config.get("obs_preset", "")
+            video_target = None
+            fix_video = fix_enc = fix_quality = False
+            enc_file = current_enc = enc_cfg = None
+            notes = []
+            if preset:
+                video_target = preset_video_settings(
+                    preset, detect_display_resolution()
+                )
+                if video_target is None:
+                    notes.append(
+                        "Couldn't detect the display's resolution — canvas/"
+                        "output/fps left unchanged."
+                    )
+                else:
+                    v = client.get_video_settings()
+                    current_video = (
+                        v.base_width, v.base_height,
+                        v.output_width, v.output_height,
+                    )
+                    current_fps = v.fps_numerator / max(v.fps_denominator, 1)
+                    fix_video = (
+                        current_video != video_target
+                        or abs(current_fps - OBS_PRESET_FPS) > 0.01
+                    )
+                    cur = (
+                        f"{current_video[0]}×{current_video[1]} canvas, "
+                        f"{current_video[2]}×{current_video[3]} output, "
+                        f"{current_fps:g} fps"
+                    )
+                    tgt = (
+                        f"{video_target[0]}×{video_target[1]} canvas, "
+                        f"{video_target[2]}×{video_target[3]} output, "
+                        f"{OBS_PRESET_FPS} fps"
+                    )
+                    lines.append(
+                        f"Video:  {cur}\n    → {tgt}"
+                        if fix_video else f"Video:  {tgt}  ✓ already set"
+                    )
+            if preset and IS_MACOS:
+                current_enc = prof("AdvOut", "RecEncoder")
+                fix_enc = not advanced or current_enc != OBS_HEVC_ENCODER_MACOS
+                if fix_enc and not advanced:
+                    lines.append("Output mode:  Simple → Advanced")
+                lines.append(
+                    f"Recording encoder:  {current_enc or '(default)'}"
+                    "\n    → Apple VT hardware HEVC"
+                    if fix_enc
+                    else "Recording encoder:  Apple VT hardware HEVC  ✓ already set"
+                )
+                enc_file = obs_record_encoder_file()
+                if enc_file is None:
+                    notes.append(
+                        "Couldn't locate OBS's profile folder — set the "
+                        "recording encoder's rate control to CRF, quality "
+                        f"{OBS_CRF_QUALITY} in OBS yourself (Settings → "
+                        "Output → Recording)."
+                    )
+                else:
+                    enc_cfg = read_record_encoder_settings()
+                    rc, q = enc_cfg.get("rate_control"), enc_cfg.get("quality")
+                    fix_quality = rc != "CRF" or q != OBS_CRF_QUALITY
+                    cur_q = (
+                        f"{rc}, quality {q}" if rc == "CRF"
+                        else rc or "(encoder default)"
+                    )
+                    lines.append(
+                        f"Rate control:  {cur_q} → CRF, quality "
+                        f"{OBS_CRF_QUALITY} (applied via an OBS restart)"
+                        if fix_quality else
+                        f"Rate control:  CRF, quality {OBS_CRF_QUALITY}"
+                        "  ✓ already set"
+                    )
+
             capture_note = ""
             try:
                 scene = client.get_current_program_scene().current_program_scene_name
@@ -1578,19 +1921,23 @@ class App(tk.Tk):
             except Exception:
                 pass
 
-            if not fix_dir and not fix_fmt:
+            notes_text = "".join(f"\n\n{n}" for n in notes)
+            if not any((fix_dir, fix_fmt, fix_video, fix_enc, fix_quality)):
                 messagebox.showinfo(
                     "OBS setup",
                     "OBS is already set up for BitDVR:\n\n"
-                    + "\n".join(lines) + capture_note,
+                    + "\n".join(lines) + notes_text + capture_note,
                 )
                 return
 
+            hands_off = (
+                "Scenes and sources are not touched."
+                if preset else "Encoder, quality, and scenes are not touched."
+            )
             if not messagebox.askyesno(
                 "Set up OBS for BitDVR?",
                 "Apply to OBS's current profile:\n\n" + "\n".join(lines)
-                + "\n\nEncoder, quality, and scenes are not touched."
-                + capture_note,
+                + "\n\n" + hands_off + notes_text + capture_note,
             ):
                 return
 
@@ -1606,8 +1953,58 @@ class App(tk.Tk):
                     for name in ("RecFormat2", "RecFormat"):
                         client.set_profile_parameter(category, name, "mkv")
                 self._append_log("==> OBS recording format set to mkv.\n")
+            if fix_video:
+                client.set_video_settings(OBS_PRESET_FPS, 1, *video_target)
+                self._append_log(
+                    f"==> OBS video set to {video_target[0]}x{video_target[1]} "
+                    f"canvas, {video_target[2]}x{video_target[3]} output, "
+                    f"{OBS_PRESET_FPS} fps.\n"
+                )
+            if fix_enc:
+                if not advanced:
+                    client.set_profile_parameter("Output", "Mode", "Advanced")
+                client.set_profile_parameter(
+                    "AdvOut", "RecEncoder", OBS_HEVC_ENCODER_MACOS
+                )
+                self._append_log("==> OBS recording encoder set to Apple VT HEVC.\n")
+
+            if fix_quality:
+                # Rate control lives in recordEncoder.json, which OBS only
+                # reads at launch and rewrites from memory on every exit —
+                # so it can only be written while OBS is down. Disconnect
+                # first: the settings applied above are in OBS's memory
+                # and get persisted by its own graceful shutdown.
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+                if messagebox.askyesno(
+                    "Restart OBS to finish?",
+                    "One setting is left — encoder rate control (CRF, "
+                    f"quality {OBS_CRF_QUALITY}) — and OBS only reads it "
+                    "at launch.\n\nRestart OBS now? BitDVR will quit OBS, "
+                    "write the setting, and relaunch it.",
+                ):
+                    if self._restart_obs_with_quality(enc_file):
+                        self._append_log(
+                            "==> OBS restarted with rate control CRF, "
+                            f"quality {OBS_CRF_QUALITY}.\n"
+                        )
+                    else:
+                        notes_text += (
+                            "\n\nThe OBS restart didn't complete — set rate "
+                            f"control to CRF, quality {OBS_CRF_QUALITY} in "
+                            "OBS yourself (Settings → Output → Recording)."
+                        )
+                else:
+                    notes_text += (
+                        "\n\nRate control was left as-is — run Set Up OBS "
+                        "again anytime to finish it, or set CRF, quality "
+                        f"{OBS_CRF_QUALITY} in OBS yourself."
+                    )
             messagebox.showinfo(
-                "OBS setup", "Done — OBS is set up for BitDVR." + capture_note
+                "OBS setup",
+                "Done — OBS is set up for BitDVR." + notes_text + capture_note,
             )
         except Exception as e:
             messagebox.showerror("OBS setup failed", f"Could not configure OBS:\n\n{e}")
@@ -1616,6 +2013,38 @@ class App(tk.Tk):
                 client.disconnect()
             except Exception:
                 pass
+
+    def _restart_obs_with_quality(self, enc_file):
+        """Quit OBS gracefully, write the preset's rate control into the
+        profile's recordEncoder.json, and relaunch. Written only while
+        OBS is down — OBS rewrites the file from memory on every exit,
+        so a write while it runs would be silently clobbered. Returns
+        True when all three steps succeeded."""
+        try:
+            if IS_MACOS:
+                subprocess.run(
+                    ["osascript", "-e", 'quit app "OBS"'],
+                    capture_output=True, timeout=15,
+                )
+            else:
+                subprocess.run(["pkill", "-TERM", "-x", "obs"], capture_output=True)
+            proc_name = "OBS" if IS_MACOS else "obs"
+            for _ in range(40):  # allow ~20 s for a graceful shutdown
+                if subprocess.run(
+                    ["pgrep", "-x", proc_name], capture_output=True
+                ).returncode != 0:
+                    break
+                time.sleep(0.5)
+            else:
+                return False
+            settings = read_record_encoder_settings()
+            settings["rate_control"] = "CRF"
+            settings["quality"] = OBS_CRF_QUALITY
+            enc_file.parent.mkdir(parents=True, exist_ok=True)
+            enc_file.write_text(json.dumps(settings))
+        except Exception:
+            return False
+        return self._launch_obs()
 
     def _on_change_obs_password(self):
         self._change_secret(
@@ -1770,7 +2199,7 @@ class App(tk.Tk):
         except OSError as e:
             messagebox.showerror("Delete failed", f"Could not delete file:\n\n{e}")
             return
-        self.status_var.set(f"Deleted {Path(path).name}")
+        self._append_log(f"==> Deleted {Path(path).name}.\n")
         self._load_default_recording()
 
     def _org_browse(self):
@@ -2053,7 +2482,7 @@ class App(tk.Tk):
             ):
                 return
         if not self._ensure_secret():
-            self.status_var.set("Cancelled — no password provided.")
+            self._append_log("==> Send cancelled — no password provided.\n")
             return
         self._run_command(
             plan["cmd"],
@@ -2084,7 +2513,7 @@ class App(tk.Tk):
             return
         self.clipboard_clear()
         self.clipboard_append(magnet)
-        self.status_var.set("Magnet link copied to clipboard.")
+        self._append_log("==> Magnet link copied to clipboard.\n")
         self._notify("BitDVR", "Magnet link copied to clipboard.")
 
     # ------------------------------------------------------------- Clean tab
@@ -2225,7 +2654,7 @@ class App(tk.Tk):
                 break
             parent = parent.parent
 
-        self.status_var.set(f"Removed {p.name}")
+        self._append_log(f"==> Removed {p.name}.\n")
         self._refresh_clean_tree()
 
     @staticmethod
@@ -2312,7 +2741,6 @@ class App(tk.Tk):
         self._captured_lines = []
 
         self._append_log(f"$ {' '.join(cmd)}\n\n")
-        self.status_var.set("Running...")
 
         env = {**os.environ, **extra_env} if extra_env else None
         self.proc = subprocess.Popen(
@@ -2347,10 +2775,8 @@ class App(tk.Tk):
             self.log_file.close()
             self.log_file = None
         if rc == 0:
-            self.status_var.set("Done ✓")
             self._notify("BitDVR", "Completed.")
         else:
-            self.status_var.set(f"Failed (exit {rc}) — see log")
             self._notify("BitDVR", f"Failed (exit {rc}) — see log")
         if self.on_done:
             self.on_done(rc)

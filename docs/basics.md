@@ -4,6 +4,8 @@ These two steps are the heart of BitDVR and are identical on the
 [local](local-mode.md) and [network](network-mode.md) paths. A shared
 log pane below the tabs shows what every action is doing, and each run
 is also written to a timestamped file under `~/.local/share/bitdvr/logs/`.
+(The Settings tab runs no jobs, so there the pane makes way for the
+settings themselves, which scroll if the window is short.)
 
 ## The Record tab
 
@@ -92,9 +94,31 @@ The first two of those — the path and the format — are the only
 settings BitDVR outright *requires*, and it can apply them for you:
 **Settings → Set Up OBS for BitDVR...** shows exactly what would
 change in OBS's current profile and applies it only on your OK (it
-also warns if your scene has no display-capture source). Encoder,
-quality, and scenes are matters of taste and hardware, so the button
-never touches them.
+also warns if your scene has no display-capture source). Scenes and
+sources are never touched.
+
+Encoder and quality are matters of taste and hardware, so by default
+the button leaves them alone too — but if you'd rather not tune them
+by hand, pick a **quality preset** from the dropdown next to the
+button and the same confirmation flow will also apply the recommended
+recording settings for that display: matching canvas/output
+resolution, 30 fps (film and TV are 24–30 fps, so 60 just doubles the
+file), and on macOS the Apple hardware HEVC encoder at constant
+quality 60. (That quality number is OBS's Apple VT "CRF" slider,
+a 0–100 scale where *higher* is better — not an x264-style CRF.)
+Expect roughly 2–4 GB per hour of 1080p30 video content. One wrinkle:
+OBS reads the rate-control setting only at launch, so when it needs
+changing BitDVR offers to quit OBS, write it, and relaunch — the rest
+applies live. On Linux, presets set resolution and fps only; pick
+NVENC/VAAPI/AMF and a quality level in OBS yourself.
+
+The *Laptop built-in display* preset records the screen as-is at its
+native size — the zero-fuss option 1 from the 16:10 note below.
+*Match display, cap output at 1080p* keeps the canvas native but
+scales the output down to 1920-wide for smaller files. The fixed
+*1080p/1440p/4K (16:9)* presets suit external monitors. Presets read
+the display's size when the button is clicked, so re-run setup after
+docking to a different monitor.
 
 **Video settings** (*Settings → Video*): set the **base (canvas)
 resolution to your display's native resolution** so the capture fills
@@ -111,6 +135,8 @@ shape. Two sane setups:
    (that's what the display showed), and the file has a nonstandard
    resolution — but every player and TV letterboxes/scales it
    correctly, so for personal viewing this is the zero-fuss option.
+   (The *Laptop built-in display* quality preset sets this up for
+   you.)
 2. **Produce true 16:9** (a clean 1920×1080 with no baked bars): set
    base *and* output to 1920×1080, then crop the capture source to the
    16:9 band of the screen where fullscreen video actually renders.

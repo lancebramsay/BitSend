@@ -18,8 +18,9 @@ folders, and getting the finished file onto your media server.
 ## What it does
 
 - **Record** — start/stop OBS from a simple GUI, with a live preview,
-  an auto-stop timer, and optional auto start/stop tied to your media
-  player's playback state.
+  an auto-stop timer, optional auto start/stop tied to your media
+  player's playback state, and one-click OBS setup with opt-in quality
+  presets matched to your display.
 - **Organize** — rename and file recordings using the folder and naming
   conventions Plex and Jellyfin actually scan for (movies with years,
   shows with seasons and episode numbers).
