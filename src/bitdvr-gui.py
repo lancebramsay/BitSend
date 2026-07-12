@@ -713,6 +713,9 @@ class App(tk.Tk):
             btn_frm, text="Stop Recording", command=self._on_record_stop, state="disabled"
         )
         self.rec_stop_btn.pack(side="left", padx=4)
+        ttk.Button(
+            btn_frm, text="Restart Capture", command=self._on_restart_capture,
+        ).pack(side="left", padx=(16, 4))
 
         ttk.Label(parent, textvariable=self.rec_status_var, anchor="w").pack(
             fill="x", padx=8
@@ -1358,6 +1361,84 @@ class App(tk.Tk):
             self.notebook.select(self.organize_tab)
         else:
             self._load_default_recording()
+
+    def _on_restart_capture(self):
+        """Restart the display-capture source(s) in the current scene —
+        the same thing as opening the source's properties in OBS and
+        pressing Restart Capture, for when the feed freezes (a known
+        ScreenCaptureKit quirk on macOS). Safe mid-recording: only the
+        source reinitializes, the recording itself keeps running."""
+        recording = self.obs_client is not None
+        client = self.obs_client if recording else self._get_obs_client()
+        if client is None:
+            return
+
+        def call(method, *args):
+            # Mid-recording, route through _obs_call so a severed
+            # connection gets the usual reconnect prompt instead of
+            # silently killing recording control.
+            if recording:
+                return self._obs_call(method, *args)
+            return getattr(client, method)(*args)
+
+        try:
+            scene = call("get_current_program_scene").current_program_scene_name
+            captures = [
+                (item.get("sourceName"), item.get("inputKind"))
+                for item in call("get_scene_item_list", scene).scene_items
+                if item.get("inputKind") in self._CAPTURE_KINDS
+            ]
+            if not captures:
+                messagebox.showinfo(
+                    "Restart capture",
+                    f"The current scene ({scene}) has no display-capture "
+                    "source to restart.",
+                )
+                return
+            for name, kind in captures:
+                if kind == "screen_capture":
+                    # The macOS SCK source exposes its properties-dialog
+                    # Restart Capture button to the websocket under this
+                    # id — but OBS keeps the button disabled (error 604)
+                    # unless it has flagged the capture as failed, and a
+                    # frozen feed isn't always flagged. Try the button,
+                    # then fall back to flipping show_cursor and back:
+                    # the source's update callback ignores unchanged
+                    # settings but tears down and reinitializes the
+                    # capture stream for that one, same as the button.
+                    try:
+                        call(
+                            "press_input_properties_button",
+                            name, "reactivate_capture",
+                        )
+                    except Exception:
+                        settings = call("get_input_settings", name).input_settings
+                        shown = settings.get("show_cursor", True)
+                        call("set_input_settings", name, {"show_cursor": not shown}, True)
+                        call("set_input_settings", name, {"show_cursor": shown}, True)
+                else:
+                    # The other capture kinds have no such button;
+                    # re-applying the source's own settings nudges its
+                    # update/reinit path instead, best effort.
+                    settings = call("get_input_settings", name).input_settings
+                    call("set_input_settings", name, settings, True)
+                self._append_log(
+                    f"==> Restarted capture source: {name}\n",
+                    file=self.record_log_file,
+                )
+            if not recording:
+                self.rec_status_var.set("Idle — capture source restarted.")
+        except Exception as e:
+            messagebox.showerror(
+                "Restart capture failed",
+                f"Could not restart the capture source:\n\n{e}",
+            )
+        finally:
+            if not recording:
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------ Local mode
 
