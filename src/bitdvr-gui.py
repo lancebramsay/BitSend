@@ -100,6 +100,7 @@ DEFAULT_CONFIG = {
     "remote_library_root": "",
     "local_mode": False,
     "local_library_root": "",
+    "hide_from_capture": True,  # macOS only; ignored on Linux
 }
 
 
@@ -211,6 +212,47 @@ def _mpris_get_property(dest, prop):
         return json.loads(proc.stdout).get("data")
     except Exception:
         return None
+
+
+def _macos_apply_capture_hiding(hidden):
+    """macOS: set every NSWindow of this process to sharingType
+    NSWindowSharingNone (True) or back to the ReadOnly default (False).
+    ScreenCaptureKit — which OBS's macOS Screen Capture is built on —
+    omits sharing-none windows from every capture, so this keeps
+    BitDVR's own control panel out of the recording the same way OBS's
+    "hide OBS" checkbox keeps OBS out (that checkbox only covers OBS's
+    windows; each app has to exclude its own). Done through the raw
+    objc runtime so plain ctypes suffices — no pyobjc dependency. The
+    windows are enumerated from NSApplication because Tk's winfo_id is
+    not an NSView pointer on macOS (messaging it segfaults)."""
+    import ctypes
+    import ctypes.util
+    try:
+        objc = ctypes.CDLL(ctypes.util.find_library("objc"))
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        sel = objc.sel_registerName
+        # objc_msgSend must be re-typed per call signature on arm64
+        send = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+        send_count = ctypes.CFUNCTYPE(
+            ctypes.c_ulong, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+        send_at = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)(("objc_msgSend", objc))
+        send_set = ctypes.CFUNCTYPE(
+            None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)(("objc_msgSend", objc))
+
+        app = send(objc.objc_getClass(b"NSApplication"), sel(b"sharedApplication"))
+        windows = send(app, sel(b"windows"))
+        sharing = 0 if hidden else 1  # NSWindowSharingNone / NSWindowSharingReadOnly
+        for i in range(send_count(windows, sel(b"count"))):
+            send_set(send_at(windows, sel(b"objectAtIndex:"), i),
+                     sel(b"setSharingType:"), sharing)
+        return True
+    except Exception:
+        return False
 
 
 def _macos_now_playing():
@@ -354,6 +396,8 @@ class App(tk.Tk):
         self.mpris_job = None
         self.mpris_was_playing = False
         self.config = load_config()
+        self._capture_hiding_job = None
+        self._sync_capture_hiding()
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="x", padx=8, pady=(8, 0))
@@ -481,6 +525,25 @@ class App(tk.Tk):
 
     def _on_mpris_toggle(self):
         self._sync_mpris_polling()
+
+    def _sync_capture_hiding(self):
+        """macOS: keep this process's windows out of screen captures
+        while the setting is on. A slow repeating tick rather than a
+        one-shot, because dialogs create new NSWindows after startup
+        and each needs the same sharingType treatment."""
+        if not IS_MACOS:
+            return
+        if self._capture_hiding_job is not None:
+            self.after_cancel(self._capture_hiding_job)
+            self._capture_hiding_job = None
+        if self.config.get("hide_from_capture", True):
+            self._tick_capture_hiding()
+        else:
+            _macos_apply_capture_hiding(False)
+
+    def _tick_capture_hiding(self):
+        _macos_apply_capture_hiding(True)
+        self._capture_hiding_job = self.after(3000, self._tick_capture_hiding)
 
     def _sync_mpris_polling(self):
         """MPRIS polling runs independent of which tab is showing, so
@@ -862,6 +925,9 @@ class App(tk.Tk):
             value=self.config.get("remote_library_root", DEFAULT_CONFIG["remote_library_root"])
         )
         self.set_local_mode_var = tk.BooleanVar(value=self.config.get("local_mode", False))
+        self.set_hide_capture_var = tk.BooleanVar(
+            value=self.config.get("hide_from_capture", True)
+        )
         self.set_local_library_var = tk.StringVar(
             value=self.config.get("local_library_root", DEFAULT_CONFIG["local_library_root"])
         )
@@ -923,6 +989,23 @@ class App(tk.Tk):
             foreground="#888888", wraplength=680, justify="left",
         ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self._on_local_mode_toggle()
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=9, column=0, columnspan=3, sticky="ew", pady=(10, 8)
+        )
+        ttk.Checkbutton(
+            frm,
+            text="Hide BitDVR's windows from screen recordings (macOS only)",
+            variable=self.set_hide_capture_var,
+            state="normal" if IS_MACOS else "disabled",
+        ).grid(row=10, column=0, columnspan=3, sticky="w")
+        ttk.Label(
+            frm,
+            text="Keeps this control panel out of the capture even when it's on the "
+                 "recorded screen. On Linux, exclusion isn't per-window — put BitDVR "
+                 "on a different monitor or workspace than the one OBS captures.",
+            foreground="#888888", wraplength=680, justify="left",
+        ).grid(row=11, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         ttk.Button(parent, text="Save", command=self._on_settings_save).pack(pady=(4, 12))
 
@@ -1018,8 +1101,10 @@ class App(tk.Tk):
         self.set_local_library_var.set(
             self.config.get("local_library_root", DEFAULT_CONFIG["local_library_root"])
         )
+        self.set_hide_capture_var.set(self.config.get("hide_from_capture", True))
         self._on_local_mode_toggle()
         self._apply_local_mode()
+        self._sync_capture_hiding()
         messagebox.showinfo("Import Settings", "Settings imported and applied.")
 
     def _on_settings_save(self):
@@ -1054,9 +1139,11 @@ class App(tk.Tk):
             "remote_library_root": remote_library_root,
             "local_mode": local_mode,
             "local_library_root": local_library_root,
+            "hide_from_capture": self.set_hide_capture_var.get(),
         }
         save_config(self.config)
         self._apply_local_mode()
+        self._sync_capture_hiding()
         messagebox.showinfo("Saved", "Settings saved.")
 
     def _on_change_obs_password(self):
@@ -1720,6 +1807,11 @@ class App(tk.Tk):
         dialog.title("Enter Password")
         dialog.transient(self)
         dialog.grab_set()
+        # Don't wait for the periodic tick — a password dialog must
+        # never be readable in a capture, even for a moment.
+        if IS_MACOS and self.config.get("hide_from_capture", True):
+            self.update_idletasks()
+            _macos_apply_capture_hiding(True)
         ttk.Label(dialog, text=prompt_text).pack(padx=12, pady=(12, 4))
         pw_var = tk.StringVar()
         entry = ttk.Entry(dialog, textvariable=pw_var, show="*", width=32)
