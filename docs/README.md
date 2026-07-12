@@ -37,8 +37,13 @@ the Settings tab.
 
 ## Requirements
 
-- **Linux** with a desktop session (X11 or Wayland). macOS support is
-  planned.
+- **Linux** with a desktop session (X11 or Wayland), or **macOS**
+  (installed via Homebrew — see below). On macOS every dependency in
+  this list comes in automatically with `brew install`, and passwords
+  live in the login Keychain instead of the desktop keyring. One
+  limitation: *auto start/stop recording with playback* and the *Grab
+  runtime/title* buttons are Linux-only (they read MPRIS, and macOS has
+  no public now-playing API).
 - **[OBS Studio](https://obsproject.com/) 28 or newer** — version 28
   ships with the WebSocket server BitDVR uses for control. Enable it
   under *Tools → WebSocket Server Settings* and set a password.
@@ -60,9 +65,36 @@ Additionally, for the **network path** only:
 
 ## Installation
 
+### macOS (Homebrew)
+
 ```sh
-git clone https://github.com/<you>/bitdvr.git
-cd bitdvr
+brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+brew install --HEAD bitdvr
+brew install --cask obs   # if you don't have OBS Studio yet
+```
+
+This installs BitDVR plus all its dependencies (Python with Tkinter,
+libtorrent, jq) and puts `bitdvr` on your PATH — run it to launch the
+GUI. In OBS, set the recording output folder to `~/Movies/OBS`
+(*Settings → Output → Recording Path*), and grant OBS Screen Recording
+permission when macOS asks.
+
+For the [network path](network-mode.md) only, the seed daemon runs as a
+launchd service managed by Homebrew:
+
+```sh
+brew services start bitdvr
+```
+
+To remove: `brew services stop bitdvr` (if started), then
+`brew uninstall bitdvr`. Settings, recordings, and Keychain entries are
+kept.
+
+### Linux
+
+```sh
+git clone https://github.com/lancebramsay/BitDVR.git
+cd BitDVR
 ./install.sh
 ```
 
@@ -116,11 +148,11 @@ path — set up the seed daemon service shown in
 
 | What | Where |
 |---|---|
-| Raw OBS recordings | `~/Videos/OBS/` (set in OBS itself) |
-| Organized staging library (network path) | `~/Videos/OBS/Library/` |
-| Sent-item archive (network path) | `~/Videos/OBS/Library/.sent/` |
+| Raw OBS recordings | `~/Videos/OBS/` — macOS: `~/Movies/OBS/` (set in OBS itself) |
+| Organized staging library (network path) | `~/Videos/OBS/Library/` — macOS: `~/Movies/OBS/Library/` |
+| Sent-item archive (network path) | `Library/.sent/` under the staging library |
 | Settings | `~/.config/bitdvr/config.json` |
-| Passwords | your desktop keyring (via `secret-tool`), never on disk |
+| Passwords | desktop keyring (via `secret-tool`) — macOS: login Keychain; never on disk |
 | Logs (one per run) | `~/.local/share/bitdvr/logs/` |
 | Seed daemon watch dir (network path) | `~/.config/bitdvr-libtorrent-daemon/watch/` |
 

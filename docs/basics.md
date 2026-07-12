@@ -99,7 +99,8 @@ TV/
 ## Where organized files go
 
 - **Network path:** into a local staging library at
-  `~/Videos/OBS/Library/`, waiting for the [Send tab](network-mode.md).
+  `~/Videos/OBS/Library/` (macOS: `~/Movies/OBS/Library/`), waiting for
+  the [Send tab](network-mode.md).
 - **Local mode:** directly into your media library folder — that's the
   whole point. See [Local path](local-mode.md).
 

@@ -66,11 +66,46 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${BITDVR_PYTHON:-python3}"
 SEED_WATCH_DIR="$HOME/.config/bitdvr-libtorrent-daemon/watch"
-LIBRARY_DIR="$HOME/Videos/OBS/Library"
-TORRENT_DIR="$HOME/Videos/OBS/.torrents"
+# macOS has no ~/Videos; ~/Movies is where OBS defaults its output
+# there. Must stay in sync with the same branch in bitdvr-gui.py /
+# bitdvr-organize.sh / bitdvr-magnet.sh.
+OS="$(uname -s)"
+if [[ "$OS" == "Darwin" ]]; then
+    RECORDINGS_DIR="$HOME/Movies/OBS"
+else
+    RECORDINGS_DIR="$HOME/Videos/OBS"
+fi
+LIBRARY_DIR="$RECORDINGS_DIR/Library"
+TORRENT_DIR="$RECORDINGS_DIR/.torrents"
 PLEX_HOST="${BITDVR_PLEX_HOST:-}"
 PEER_PORT=51413
 SECRET_SERVICE="bitdvr-deluge-web"
+
+# Keyring backends — login keyring via secret-tool on Linux, the login
+# Keychain via /usr/bin/security on macOS. secret_store takes the secret
+# on stdin on both platforms so it never appears in a process list
+# (security's -i mode reads whole commands from stdin; its parser needs
+# backslashes and double quotes escaped).
+secret_lookup() { # secret_lookup <service> <account>
+    if [[ "$OS" == "Darwin" ]]; then
+        security find-generic-password -s "$1" -a "$2" -w 2>/dev/null
+    else
+        secret-tool lookup service "$1" account "$2" 2>/dev/null
+    fi
+}
+secret_store() { # printf '%s' <secret> | secret_store <service> <account> <label>
+    if [[ "$OS" == "Darwin" ]]; then
+        local secret=""
+        # read hits EOF (status 1) on input with no trailing newline —
+        # the secret is still in $secret, so don't let set -e trip.
+        IFS= read -r secret || [[ -n "$secret" ]]
+        secret="${secret//\\/\\\\}"; secret="${secret//\"/\\\"}"
+        printf 'add-generic-password -U -s "%s" -a "%s" -l "%s" -w "%s"\n' \
+            "$1" "$2" "$3" "$secret" | security -i
+    else
+        secret-tool store --label="$3" service "$1" account "$2"
+    fi
+}
 
 usage() {
     echo "Usage: $0 --label movies|tv --path <file-or-dir> [--host <deluge-host>] [--move-to <abs-path-on-deluge-host>]" >&2
@@ -148,7 +183,7 @@ case "$SRC_PATH" in
         ;;
 esac
 
-DELUGE_WEB_PASSWORD=$(secret-tool lookup service "$SECRET_SERVICE" account deluge-web 2>/dev/null || true)
+DELUGE_WEB_PASSWORD=$(secret_lookup "$SECRET_SERVICE" deluge-web || true)
 if [[ -z "$DELUGE_WEB_PASSWORD" ]]; then
     echo "No deluge-web password stored in the login keyring yet."
     read -r -s -p "deluge-web password: " DELUGE_WEB_PASSWORD
@@ -157,8 +192,8 @@ if [[ -z "$DELUGE_WEB_PASSWORD" ]]; then
         echo "error: empty password entered" >&2
         exit 1
     fi
-    printf '%s' "$DELUGE_WEB_PASSWORD" | secret-tool store --label="BitDVR deluge-web" service "$SECRET_SERVICE" account deluge-web
-    echo "Stored in the login keyring (ksecretd) — not written to disk in plaintext."
+    printf '%s' "$DELUGE_WEB_PASSWORD" | secret_store "$SECRET_SERVICE" deluge-web "BitDVR deluge-web"
+    echo "Stored in the login keyring/Keychain — not written to disk in plaintext."
 fi
 
 mkdir -p "$TORRENT_DIR"
@@ -174,7 +209,15 @@ WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
 jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
 cp "$TORRENT_FILE" "$WATCH_TORRENT"
 
-LOCAL_IP=$(ip route get "$PLEX_HOST" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+# This machine's LAN IP on whatever interface routes to the Deluge host
+# — `ip route get` on Linux; macOS has no `ip`, so ask its routing table
+# for the interface and then that interface for its address.
+if [[ "$OS" == "Darwin" ]]; then
+    IFACE=$(route -n get "$PLEX_HOST" 2>/dev/null | awk '/interface:/ {print $2}' || true)
+    LOCAL_IP=$(ipconfig getifaddr "${IFACE:-en0}" 2>/dev/null || true)
+else
+    LOCAL_IP=$(ip route get "$PLEX_HOST" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+fi
 if [[ -z "$LOCAL_IP" ]]; then
     echo "error: could not determine this machine's LAN IP toward the Deluge host" >&2
     exit 1
@@ -216,7 +259,14 @@ echo "==> Uploading torrent to deluge-web..."
 # the same ARG_MAX reason as deluge_rpc above — this jq invocation is
 # itself a separate exec() that would hit the same limit if the base64
 # blob were passed as a plain --arg on jq's own command line.
-ADD_RESP=$(deluge_rpc "core.add_torrent_file" "$(jq -nc --arg name "${NAME}.torrent" --rawfile data <(base64 -w0 "$TORRENT_FILE") '[$name, $data, {}]')")
+# base64 with no line wrapping: GNU spells it -w0; BSD base64 (macOS)
+# has no -w flag and doesn't wrap by default — tr strips newlines either
+# way so both produce one unbroken blob.
+b64_nowrap() {
+    if [[ "$OS" == "Darwin" ]]; then base64 -i "$1" | tr -d '\n'
+    else base64 -w0 "$1"; fi
+}
+ADD_RESP=$(deluge_rpc "core.add_torrent_file" "$(jq -nc --arg name "${NAME}.torrent" --rawfile data <(b64_nowrap "$TORRENT_FILE") '[$name, $data, {}]')")
 TORRENT_ID=$(echo "$ADD_RESP" | jq -r '.result // empty')
 if [[ -z "$TORRENT_ID" || "$TORRENT_ID" == "false" ]]; then
     echo "error: failed to add torrent: $ADD_RESP" >&2

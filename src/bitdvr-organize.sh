@@ -38,7 +38,14 @@ set -euo pipefail
 #     and episode blank means Plex likely won't recognize the file as an
 #     episode even though this script will still organize it by name.
 
-RECORDINGS_DIR="$HOME/Videos/OBS"
+# macOS has no ~/Videos; ~/Movies is where OBS defaults its output
+# there. Must stay in sync with the same branch in bitdvr-gui.py /
+# bitdvr-sync.sh / bitdvr-magnet.sh.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    RECORDINGS_DIR="$HOME/Movies/OBS"
+else
+    RECORDINGS_DIR="$HOME/Videos/OBS"
+fi
 LIBRARY_DIR="$RECORDINGS_DIR/Library"
 
 usage() {
@@ -96,7 +103,13 @@ fi
 [[ -n "$DEST_ROOT" ]] && LIBRARY_DIR="$DEST_ROOT"
 
 if [[ -z "$FILE" ]]; then
-    FILE=$(find "$RECORDINGS_DIR" -maxdepth 1 -name "*.mkv" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+    # "mtime path" lines, newest first — GNU find spells this -printf,
+    # BSD find (macOS) has no -printf so stat -f fills in.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        FILE=$(find "$RECORDINGS_DIR" -maxdepth 1 -name "*.mkv" -exec stat -f '%m %N' {} + 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+    else
+        FILE=$(find "$RECORDINGS_DIR" -maxdepth 1 -name "*.mkv" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+    fi
     if [[ -z "$FILE" ]]; then
         echo "error: no unorganized .mkv recordings found directly in $RECORDINGS_DIR" >&2
         exit 1

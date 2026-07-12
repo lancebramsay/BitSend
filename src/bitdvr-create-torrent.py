@@ -30,7 +30,10 @@ def main():
         t.add_tracker(url, tier)
     if args.private:
         t.set_priv(True)
-    t.set_creator(f"libtorrent {lt.version}")
+    # lt.version was dropped from the 2.1 bindings; older distro
+    # packages (2.0.x) predate __version__ being reliable — accept either.
+    lt_version = getattr(lt, "__version__", None) or getattr(lt, "version", "unknown")
+    t.set_creator(f"libtorrent {lt_version}")
     lt.set_piece_hashes(t, os.path.dirname(src))
 
     with open(args.output, "wb") as f:

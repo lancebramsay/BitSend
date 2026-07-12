@@ -25,6 +25,12 @@ UNIT_DIR="$HOME/.config/systemd/user"
 APP_DIR="$HOME/.local/share/applications"
 SERVICE="bitdvr-libtorrent-daemon"
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "error: a Homebrew install isn't managed by this script — instead run:" >&2
+    echo "    brew services stop bitdvr; brew uninstall bitdvr" >&2
+    exit 1
+fi
+
 PURGE_CONFIG=0
 PURGE_LIBRARY=0
 for arg in "$@"; do

@@ -45,7 +45,11 @@ info() { echo "==> $*"; }
 warn() { echo "WARNING: $*" >&2; }
 die()  { echo "error: $*" >&2; exit 1; }
 
-[[ "$(uname -s)" == "Darwin" ]] && die "macOS isn't supported yet — BitDVR currently depends on Linux-only tools (secret-tool, ip). See the README roadmap."
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    die "on macOS, install through Homebrew instead:
+    brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+    brew install --HEAD bitdvr"
+fi
 [[ "${EUID}" -eq 0 ]] && die "run this as your normal user, not root — everything installs into your own home directory"
 [[ -f "$REPO_DIR/src/bitdvr-gui.py" ]] || die "run this from a BitDVR checkout (src/bitdvr-gui.py not found next to install.sh)"
 

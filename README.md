@@ -56,10 +56,21 @@ behind it, and the full disclaimer. Good starting points:
 
 ## Getting started
 
+**Linux:**
+
 ```sh
 git clone https://github.com/lancebramsay/BitDVR.git
 cd BitDVR
 ./install.sh
+```
+
+**macOS (Homebrew):**
+
+```sh
+brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
+brew install --HEAD bitdvr
+brew install --cask obs   # if you don't have OBS Studio yet
+bitdvr
 ```
 
 Then head to the **[User Guide](docs/README.md)**:
@@ -82,8 +93,9 @@ reproducible bugs belong in
 
 ## Requirements at a glance
 
-- Linux with a desktop session
-  ([macOS support is planned](https://github.com/lancebramsay/BitDVR/discussions/2))
+- Linux with a desktop session, or macOS (via Homebrew — one macOS
+  limitation: auto start/stop with playback is Linux-only, since macOS
+  has no public now-playing API)
 - [OBS Studio](https://obsproject.com/) 28+ (obs-websocket built in)
 - Python 3 with Tkinter
 - [libtorrent](https://libtorrent.org/) Python bindings and `jq`

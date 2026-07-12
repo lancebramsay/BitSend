@@ -50,7 +50,8 @@ organizes.
   `<root>/Movies` and your **TV** library at `<root>/TV` — see
   [Advanced setup](advanced-setup.md#media-server-libraries). Both
   servers can watch folders and pick new files up automatically.
-- **Disk:** raw OBS recordings land in `~/Videos/OBS/` first;
+- **Disk:** raw OBS recordings land in `~/Videos/OBS/` (macOS:
+  `~/Movies/OBS/`) first;
   organizing *moves* (not copies) the file into the library, so no
   duplicate is left behind.
 

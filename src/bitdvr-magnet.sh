@@ -23,7 +23,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${BITDVR_PYTHON:-python3}"
 SEED_WATCH_DIR="$HOME/.config/bitdvr-libtorrent-daemon/watch"
-TORRENT_DIR="$HOME/Videos/OBS/.torrents"
+# macOS has no ~/Videos; must stay in sync with the same branch in
+# bitdvr-gui.py / bitdvr-organize.sh / bitdvr-sync.sh.
+OS="$(uname -s)"
+if [[ "$OS" == "Darwin" ]]; then
+    TORRENT_DIR="$HOME/Movies/OBS/.torrents"
+else
+    TORRENT_DIR="$HOME/Videos/OBS/.torrents"
+fi
 PEER_PORT=51413
 
 usage() {
@@ -58,7 +65,15 @@ WATCH_TORRENT="$SEED_WATCH_DIR/$(basename "$TORRENT_FILE")"
 jq -nc --arg save_path "$(dirname "$SRC_PATH")" '{save_path: $save_path}' > "$WATCH_TORRENT.json"
 cp "$TORRENT_FILE" "$WATCH_TORRENT"
 
-LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+# This machine's LAN IP on its default route — `ip route get` on Linux;
+# macOS has no `ip`, so ask its routing table for the default interface
+# and then that interface for its address.
+if [[ "$OS" == "Darwin" ]]; then
+    IFACE=$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}' || true)
+    LOCAL_IP=$(ipconfig getifaddr "${IFACE:-en0}" 2>/dev/null || true)
+else
+    LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}')
+fi
 if [[ -z "$LOCAL_IP" ]]; then
     echo "error: could not determine this machine's LAN IP" >&2
     exit 1

@@ -72,9 +72,14 @@ systemctl --user enable --now bitdvr-libtorrent-daemon
 It listens on port `51413` for LAN peers. Check on it any time with
 `journalctl --user -u bitdvr-libtorrent-daemon`.
 
+On **macOS** the daemon is a launchd service managed by Homebrew
+instead — `brew services start bitdvr` — with its log at
+`$(brew --prefix)/var/log/bitdvr-libtorrent-daemon.log`.
+
 ## The Send tab
 
-The Send tab shows your staging library (`~/Videos/OBS/Library/`) as a
+The Send tab shows your staging library (`~/Videos/OBS/Library/`;
+macOS: `~/Movies/OBS/Library/`) as a
 tree — flat files at the root, series grouped as Series → Season →
 file. Select any level and the label under the tree spells out exactly
 what will happen before you click anything:
@@ -119,7 +124,8 @@ picks up where things left off.
 ## Troubleshooting
 
 - **Transfer stuck at 0%** — check the seed daemon is running
-  (`systemctl --user status bitdvr-libtorrent-daemon`) and that the two
+  (`systemctl --user status bitdvr-libtorrent-daemon`; macOS:
+  `brew services info bitdvr`) and that the two
   machines can reach each other (`ping`, and port `51413` open in the
   recording machine's firewall for LAN traffic).
 - **File landed but in the wrong folder** — the Deluge labels do the

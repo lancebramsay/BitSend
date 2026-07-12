@@ -74,7 +74,12 @@ except ImportError:
 ORGANIZE_SCRIPT = SCRIPT_DIR / "bitdvr-organize.sh"
 SYNC_SCRIPT = SCRIPT_DIR / "bitdvr-sync.sh"
 MAGNET_SCRIPT = SCRIPT_DIR / "bitdvr-magnet.sh"
-RECORDINGS_DIR = Path.home() / "Videos" / "OBS"
+IS_MACOS = sys.platform == "darwin"
+# ~/Movies is where OBS defaults its output on macOS (there is no
+# ~/Videos there); the OBS/ subfolder keeps raw recordings separated the
+# same way as on Linux. Must stay in sync with the same branch in
+# bitdvr-organize.sh / bitdvr-sync.sh / bitdvr-magnet.sh.
+RECORDINGS_DIR = Path.home() / ("Movies" if IS_MACOS else "Videos") / "OBS"
 LIBRARY_DIR = RECORDINGS_DIR / "Library"
 SENT_DIR = LIBRARY_DIR / ".sent"
 SEED_WATCH_DIR = Path.home() / ".config" / "bitdvr-libtorrent-daemon" / "watch"
@@ -109,6 +114,67 @@ def load_config():
 def save_config(cfg):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+
+
+def secret_lookup(service, account):
+    """Returns the stored secret string, or None if absent/unreadable.
+    Linux: the login keyring via secret-tool. macOS: the login Keychain
+    via /usr/bin/security (find-generic-password -w prints the secret
+    with a trailing newline that secret-tool doesn't add — stripped here
+    so both backends return the same string that was stored)."""
+    if IS_MACOS:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout[:-1] if result.stdout.endswith("\n") else result.stdout
+        return None
+    result = subprocess.run(
+        [SECRET_TOOL, "lookup", "service", service, "account", account],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0 and result.stdout:
+        return result.stdout
+    return None
+
+
+def secret_store(service, account, label, secret):
+    """Stores the secret, returning True on success. Both backends take
+    the secret over stdin, never as an argv item another process could
+    catch in a process listing — on macOS that means security's -i
+    interactive mode (a plain `add-generic-password -w <secret>` would be
+    argv), whose command parser needs backslashes and double quotes
+    escaped."""
+    if IS_MACOS:
+        def esc(s):
+            return s.replace("\\", "\\\\").replace('"', '\\"')
+        cmd = (
+            f'add-generic-password -U -s "{esc(service)}" -a "{esc(account)}"'
+            f' -l "{esc(label)}" -w "{esc(secret)}"\n'
+        )
+        proc = subprocess.run(
+            ["security", "-i"], input=cmd, text=True, capture_output=True
+        )
+        return proc.returncode == 0
+    store = subprocess.run(
+        [SECRET_TOOL, "store", f"--label={label}", "service", service, "account", account],
+        input=secret, text=True,
+    )
+    return store.returncode == 0
+
+
+def secret_clear(service, account):
+    if IS_MACOS:
+        subprocess.run(
+            ["security", "delete-generic-password", "-s", service, "-a", account],
+            capture_output=True,
+        )
+    else:
+        subprocess.run(
+            [SECRET_TOOL, "clear", "service", service, "account", account],
+            capture_output=True,
+        )
 
 
 def _mpris_names():
@@ -286,7 +352,10 @@ class App(tk.Tk):
             state="disabled",
             bg="#111111",
             fg="#dddddd",
-            font=("monospace", 10),
+            # "monospace" is an X11/fontconfig alias that macOS's Tk
+            # doesn't resolve — it silently falls back to a proportional
+            # font there, so name a real family instead.
+            font=("Menlo", 11) if IS_MACOS else ("monospace", 10),
         )
         scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scroll.set)
@@ -328,8 +397,15 @@ class App(tk.Tk):
         )
         self.rec_sec_spin.grid(row=0, column=3, padx=(8, 2))
         ttk.Label(frm, text="sec").grid(row=0, column=4, sticky="w")
+        # The MPRIS-driven conveniences (Grab runtime/title, auto
+        # start/stop with playback) have no macOS equivalent — the only
+        # system-wide now-playing source there is the private MediaRemote
+        # framework, which Apple locked down in macOS 15.4. Shown but
+        # disabled rather than hidden, so the Linux/macOS UIs stay
+        # recognizably the same app.
         ttk.Button(
             frm, text="Grab runtime", command=self._on_grab_runtime,
+            state="disabled" if IS_MACOS else "normal",
         ).grid(row=0, column=5, padx=(12, 0))
         ttk.Label(
             frm, text="(uncheck for manual stop only — Stop is always available either way)"
@@ -338,9 +414,13 @@ class App(tk.Tk):
         self.mpris_auto_startstop_var = tk.BooleanVar(value=False)
         mpris_frm = ttk.Frame(parent)
         mpris_frm.pack(fill="x", padx=8, pady=(0, 4))
+        auto_text = "Auto start/stop recording with playback"
+        if IS_MACOS:
+            auto_text += " (not available on macOS — no media-player status API)"
         ttk.Checkbutton(
-            mpris_frm, text="Auto start/stop recording with playback",
+            mpris_frm, text=auto_text,
             variable=self.mpris_auto_startstop_var, command=self._on_mpris_toggle,
+            state="disabled" if IS_MACOS else "normal",
         ).pack(anchor="w")
 
         btn_frm = ttk.Frame(parent)
@@ -964,10 +1044,7 @@ class App(tk.Tk):
         )
 
     def _change_secret(self, service, account, keyring_label, prompt_text):
-        subprocess.run(
-            [SECRET_TOOL, "clear", "service", service, "account", account],
-            capture_output=True,
-        )
+        secret_clear(service, account)
         pw = self._get_or_prompt_secret(service, account, keyring_label, prompt_text)
         if pw is not None:
             messagebox.showinfo("Password updated", f"{keyring_label} password updated in the keyring.")
@@ -1014,9 +1091,10 @@ class App(tk.Tk):
         title_row.columnconfigure(1, weight=1)
         ttk.Label(title_row, text="Title (optional):").grid(row=0, column=0, sticky="w")
         ttk.Entry(title_row, textvariable=self.org_title_var).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(title_row, text="Grab title", command=self._on_grab_title).grid(
-            row=0, column=2, padx=(6, 0)
-        )
+        ttk.Button(
+            title_row, text="Grab title", command=self._on_grab_title,
+            state="disabled" if IS_MACOS else "normal",
+        ).grid(row=0, column=2, padx=(6, 0))
 
         self.org_year_row = ttk.Frame(frm)
         self.org_year_row.grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -1601,23 +1679,14 @@ class App(tk.Tk):
         """Looks up service/account in the login keyring, prompting once (and
         storing) if it isn't there yet. Returns the secret string, or None if
         the user cancelled the prompt or storing failed."""
-        result = subprocess.run(
-            [SECRET_TOOL, "lookup", "service", service, "account", account],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and result.stdout:
-            return result.stdout
+        secret = secret_lookup(service, account)
+        if secret is not None:
+            return secret
 
         pw = self._prompt_password(prompt_text)
         if not pw:
             return None
-        store = subprocess.run(
-            [SECRET_TOOL, "store", f"--label={keyring_label}", "service", service, "account", account],
-            input=pw,
-            text=True,
-        )
-        return pw if store.returncode == 0 else None
+        return pw if secret_store(service, account, keyring_label, pw) else None
 
     def _prompt_password(self, prompt_text):
         dialog = tk.Toplevel(self)
@@ -1699,8 +1768,21 @@ class App(tk.Tk):
 
     @staticmethod
     def _notify(title, body):
+        # Title/body go through as osascript run-handler arguments rather
+        # than being spliced into the AppleScript source, so free-text
+        # titles can't break (or inject into) the script.
+        if IS_MACOS:
+            cmd = [
+                "osascript", "-e",
+                "on run argv\n"
+                "display notification (item 2 of argv) with title (item 1 of argv)\n"
+                "end run",
+                title, body,
+            ]
+        else:
+            cmd = ["notify-send", title, body]
         try:
-            subprocess.run(["notify-send", title, body], check=False)
+            subprocess.run(cmd, check=False)
         except FileNotFoundError:
             pass
 
