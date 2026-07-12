@@ -1353,6 +1353,21 @@ class App(tk.Tk):
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
 
+        obs_frm = ttk.Frame(parent)
+        obs_frm.pack(fill="x", padx=8, pady=12)
+        ttk.Label(
+            obs_frm,
+            text="One-time OBS setup — applies the two settings BitDVR needs "
+                 "(recording path and .mkv format), after showing you exactly "
+                 "what would change. Encoder, quality, and scenes stay yours.",
+            foreground="#888888", wraplength=680, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
+        ttk.Button(
+            obs_frm, text="Set Up OBS for BitDVR...", command=self._on_setup_obs,
+        ).pack(anchor="w")
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=8)
+
         pw_frm = ttk.Frame(parent)
         pw_frm.pack(fill="x", padx=8, pady=12)
         ttk.Label(pw_frm, text="Stored passwords (in the login keyring):").pack(
@@ -1491,6 +1506,116 @@ class App(tk.Tk):
         self._apply_local_mode()
         self._sync_capture_hiding()
         messagebox.showinfo("Saved", "Settings saved.")
+
+    # Input kinds that count as "a display is being captured" — the
+    # macOS ScreenCaptureKit source, its pre-SCK predecessor, and the
+    # Linux PipeWire/X11 screen sources. Window/application capture
+    # kinds are deliberately not listed: the docs recommend display
+    # capture, and this check backs the docs.
+    _CAPTURE_KINDS = {
+        "screen_capture", "display_capture", "monitor_capture",
+        "xshm_input", "pipewire-desktop-capture-source",
+        "pipewire-screen-capture-source",
+    }
+
+    def _on_setup_obs(self):
+        """Apply the two OBS settings BitDVR requires — recording path
+        and mkv container — to the current OBS profile, but only after
+        showing exactly what would change and getting a yes. OBS is a
+        shared tool (people stream with it); nothing here may happen
+        silently, and matters of taste (encoder, quality, canvas,
+        scenes) are never touched."""
+        client = self._get_obs_client()
+        if client is None:
+            return
+        try:
+            if client.get_record_status().output_active:
+                messagebox.showwarning(
+                    "Recording in progress",
+                    "OBS is recording right now — stop that recording first, "
+                    "since these settings apply to new recordings.",
+                )
+                return
+
+            def prof(category, name):
+                try:
+                    value = client.get_profile_parameter(category, name).parameter_value
+                    return value if value else None
+                except Exception:
+                    return None
+
+            current_dir = client.get_record_directory().record_directory or ""
+            target_dir = str(RECORDINGS_DIR)
+            # The container key was renamed RecFormat -> RecFormat2 in
+            # OBS 29; read whichever the profile has, for the output
+            # mode actually in use.
+            advanced = prof("Output", "Mode") == "Advanced"
+            fmt_category = "AdvOut" if advanced else "SimpleOutput"
+            current_fmt = prof(fmt_category, "RecFormat2") or prof(fmt_category, "RecFormat")
+
+            fix_dir = os.path.normpath(current_dir) != os.path.normpath(target_dir)
+            fix_fmt = (current_fmt or "").lower() not in ("mkv", "matroska")
+            lines = [
+                f"Recording path:  {current_dir or '(unset)'} → {target_dir}"
+                if fix_dir else f"Recording path:  {target_dir}  ✓ already set",
+                f"Recording format:  {current_fmt or '(unknown)'} → mkv"
+                if fix_fmt else "Recording format:  mkv  ✓ already set",
+            ]
+
+            capture_note = ""
+            try:
+                scene = client.get_current_program_scene().current_program_scene_name
+                kinds = {
+                    item.get("inputKind")
+                    for item in client.get_scene_item_list(scene).scene_items
+                }
+                if not (kinds & self._CAPTURE_KINDS):
+                    capture_note = (
+                        f"\n\nNote: the current scene ({scene}) has no display-capture "
+                        "source, so recordings would be empty. Add one in OBS — "
+                        "see the Basics guide. (BitDVR won't create sources itself.)"
+                    )
+            except Exception:
+                pass
+
+            if not fix_dir and not fix_fmt:
+                messagebox.showinfo(
+                    "OBS setup",
+                    "OBS is already set up for BitDVR:\n\n"
+                    + "\n".join(lines) + capture_note,
+                )
+                return
+
+            if not messagebox.askyesno(
+                "Set up OBS for BitDVR?",
+                "Apply to OBS's current profile:\n\n" + "\n".join(lines)
+                + "\n\nEncoder, quality, and scenes are not touched."
+                + capture_note,
+            ):
+                return
+
+            if fix_dir:
+                RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                client.set_record_directory(target_dir)
+                self._append_log(f"==> OBS recording path set to {target_dir}.\n")
+            if fix_fmt:
+                # Write both the modern and legacy keys, for both output
+                # modes — extra keys are inert, and this way the setting
+                # sticks whichever mode/version combination is in play.
+                for category in ("SimpleOutput", "AdvOut"):
+                    for name in ("RecFormat2", "RecFormat"):
+                        client.set_profile_parameter(category, name, "mkv")
+                self._append_log("==> OBS recording format set to mkv.\n")
+            messagebox.showinfo(
+                "OBS setup", "Done — OBS is set up for BitDVR." + capture_note
+            )
+        except Exception as e:
+            messagebox.showerror("OBS setup failed", f"Could not configure OBS:\n\n{e}")
+        finally:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
     def _on_change_obs_password(self):
         self._change_secret(

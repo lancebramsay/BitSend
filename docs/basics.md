@@ -88,6 +88,14 @@ needs that); and use your GPU's hardware encoder (Apple VT on macOS,
 NVENC/VAAPI/AMF on Linux) with quality-based rate control rather than
 a fixed low bitrate.
 
+The first two of those — the path and the format — are the only
+settings BitDVR outright *requires*, and it can apply them for you:
+**Settings → Set Up OBS for BitDVR...** shows exactly what would
+change in OBS's current profile and applies it only on your OK (it
+also warns if your scene has no display-capture source). Encoder,
+quality, and scenes are matters of taste and hardware, so the button
+never touches them.
+
 **Video settings** (*Settings → Video*): set the **base (canvas)
 resolution to your display's native resolution** so the capture fills
 the canvas exactly, and the output (scaled) resolution to match it —

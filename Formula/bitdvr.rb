@@ -153,9 +153,10 @@ class Bitdvr < Formula
 
       BitDVR drives OBS Studio 28+, installed separately:
         brew install --cask obs
-      In OBS: enable Tools -> WebSocket Server Settings (set a password),
-      set the recording output folder to ~/Movies/OBS, and grant OBS
-      Screen Recording permission when macOS asks.
+      In OBS: enable Tools -> WebSocket Server Settings (set a password)
+      and grant OBS Screen Recording permission when macOS asks. Then
+      BitDVR's Settings tab ("Set Up OBS for BitDVR...") can apply the
+      recording path and format OBS needs for BitDVR.
 
       Network path only (sending to a media server on another machine) —
       start the seed daemon:
