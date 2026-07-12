@@ -240,6 +240,7 @@ class App(tk.Tk):
         self.obs_client = None
         self.record_deadline = None
         self._record_tick_job = None
+        self._record_health_tick = 0
         self.record_log_file = None
         self.preview_client = None
         self.preview_job = None
@@ -471,6 +472,7 @@ class App(tk.Tk):
             self._preview_fail_count += 1
             if self._preview_fail_count >= 3:
                 self._stop_preview(message="Preview lost connection to OBS.")
+                self._start_preview()
                 return
         self.preview_job = self.after(1000, self._tick_preview)
 
@@ -505,14 +507,47 @@ class App(tk.Tk):
         if pw is None:
             return None
         host, port = self.config["obs_host"], self.config["obs_port"]
+        while True:
+            try:
+                return obs.ReqClient(host=host, port=port, password=pw, timeout=5)
+            except Exception as e:
+                retry = messagebox.askretrycancel(
+                    "OBS connection failed",
+                    f"Could not connect to OBS WebSocket at {host}:{port}.\n\n"
+                    f"{self._describe_obs_error(e)}\n\n"
+                    "If OBS isn't running, launch it and click Retry.",
+                )
+                if not retry:
+                    return None
+
+    @staticmethod
+    def _describe_obs_error(e):
+        """Plain-English gloss for the connect-time exceptions we actually
+        see (ConnectionRefusedError's str is just '[Errno 111] Connection
+        refused', which isn't self-explanatory) — falls back to str(e) for
+        anything else."""
+        if isinstance(e, ConnectionRefusedError):
+            return "Connection refused — OBS isn't running, or its WebSocket server is disabled (Tools → WebSocket Server Settings in OBS)."
+        if isinstance(e, TimeoutError):
+            return "Connection timed out — check the host/port in Settings and that OBS is reachable."
+        return str(e)
+
+    def _obs_call(self, method, *args, **kwargs):
+        """Call `method` on self.obs_client, reconnecting once (with the
+        same launch-OBS-and-retry prompt) if the connection was severed.
+        Re-raises the original exception if reconnecting fails or is
+        cancelled, so callers' existing except blocks still fire."""
         try:
-            return obs.ReqClient(host=host, port=port, password=pw, timeout=5)
-        except Exception as e:
-            messagebox.showerror(
-                "OBS connection failed",
-                f"Could not connect to OBS WebSocket at {host}:{port}.\n\n{e}",
-            )
-            return None
+            return getattr(self.obs_client, method)(*args, **kwargs)
+        except Exception:
+            try:
+                self.obs_client.disconnect()
+            except Exception:
+                pass
+            self.obs_client = self._get_obs_client()
+            if self.obs_client is None:
+                raise
+            return getattr(self.obs_client, method)(*args, **kwargs)
 
     def _on_record_start(self):
         self._start_recording(silent=False)
@@ -573,6 +608,7 @@ class App(tk.Tk):
 
         self.obs_client = client
         self.record_deadline = time.monotonic() + total_seconds if use_timer else None
+        self._record_health_tick = 0
         self.rec_start_btn.configure(state="disabled")
         self.rec_stop_btn.configure(state="normal")
         self.status_var.set("Recording...")
@@ -589,6 +625,35 @@ class App(tk.Tk):
     def _tick_record(self):
         if self.obs_client is None:
             return
+        self._record_health_tick += 1
+        if self._record_health_tick >= 5:
+            self._record_health_tick = 0
+            try:
+                self._obs_call("get_record_status")
+            except Exception:
+                self._append_log(
+                    "==> Lost connection to OBS and reconnect was cancelled — "
+                    "BitDVR can no longer control this recording. Check OBS directly.\n",
+                    file=self.record_log_file,
+                )
+                messagebox.showwarning(
+                    "OBS connection lost",
+                    "BitDVR lost its connection to OBS and can no longer control this "
+                    "recording.\n\nOBS itself may still be recording — check it directly.",
+                )
+                if self._record_tick_job is not None:
+                    self.after_cancel(self._record_tick_job)
+                    self._record_tick_job = None
+                self.obs_client = None
+                self.record_deadline = None
+                self.rec_start_btn.configure(state="normal")
+                self.rec_stop_btn.configure(state="disabled")
+                self.rec_status_var.set("Idle — lost connection to OBS.")
+                self.status_var.set("Idle")
+                if self.record_log_file:
+                    self.record_log_file.close()
+                    self.record_log_file = None
+                return
         if self.record_deadline is not None:
             remaining = self.record_deadline - time.monotonic()
             if remaining <= 0:
@@ -613,7 +678,7 @@ class App(tk.Tk):
 
         output_path = None
         try:
-            resp = self.obs_client.stop_record()
+            resp = self._obs_call("stop_record")
             output_path = getattr(resp, "output_path", None)
             self._append_log(
                 f"==> Recording stopped ({reason}). Output: {output_path}\n",

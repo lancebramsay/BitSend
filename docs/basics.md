@@ -26,6 +26,12 @@ actual capturing, BitDVR does the driving.
 - **Live preview** — a small once-a-second snapshot of OBS's program
   scene, so you can confirm OBS is pointed at the right screen before
   committing to a two-hour recording.
+- **Connection recovery** — if OBS isn't running, or its WebSocket
+  connection drops mid-session, BitDVR prompts you to launch/restart
+  OBS and retry rather than just failing. A brief drop during an active
+  recording is bridged automatically; if you cancel the reconnect
+  prompt instead, BitDVR gives up control of that recording (OBS may
+  still be recording on its own — check it directly).
 
 When a recording stops — manually, by timer, or by playback ending —
 BitDVR switches to the Organize tab with the new file pre-loaded.
