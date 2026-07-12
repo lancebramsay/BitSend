@@ -84,6 +84,16 @@ GUI. In OBS, set the recording output folder to `~/Movies/OBS`
 (*Settings → Output → Recording Path*), and grant OBS Screen Recording
 permission when macOS asks.
 
+The install also builds a `BitDVR.app` bundle so the app can live in
+your Dock with its own name and icon. Link it into `~/Applications`:
+
+```sh
+ln -sfn "$(brew --prefix)/opt/bitdvr/BitDVR.app" ~/Applications/BitDVR.app
+```
+
+Open it from there (or via Spotlight), then right-click its Dock icon →
+*Options → Keep in Dock*. The symlink stays valid across `brew upgrade`.
+
 For the [network path](network-mode.md) only, the seed daemon runs as a
 launchd service managed by Homebrew:
 

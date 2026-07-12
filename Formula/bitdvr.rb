@@ -55,6 +55,41 @@ class Bitdvr < Formula
       SH
     end
     chmod 0755, Dir[bin/"bitdvr*"]
+
+    # A minimal BitDVR.app so the GUI lives in the Dock like a real app —
+    # the macOS counterpart of the .desktop entry install.sh writes on
+    # Linux. The launcher execs the pinned interpreter without forking,
+    # so the running process keeps this bundle's identity and the Dock
+    # shows BitDVR's name and television icon instead of a generic
+    # "Python". Users symlink it into ~/Applications (see caveats) —
+    # a symlink to opt_prefix survives upgrades, a copy wouldn't.
+    return unless OS.mac?
+
+    app = prefix/"BitDVR.app"
+    (app/"Contents/MacOS").mkpath
+    (app/"Contents/MacOS/BitDVR").write <<~SH
+      #!/bin/bash
+      exec "#{opt_libexec}/bitdvr-gui.py" "$@"
+    SH
+    chmod 0755, app/"Contents/MacOS/BitDVR"
+    (app/"Contents/Resources").install "docs/assets/bitdvr.icns"
+    (app/"Contents/Info.plist").write <<~XML
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>CFBundleName</key><string>BitDVR</string>
+        <key>CFBundleDisplayName</key><string>BitDVR</string>
+        <key>CFBundleIdentifier</key><string>com.github.lancebramsay.bitdvr</string>
+        <key>CFBundleExecutable</key><string>BitDVR</string>
+        <key>CFBundleIconFile</key><string>bitdvr</string>
+        <key>CFBundleShortVersionString</key><string>#{version}</string>
+        <key>LSMinimumSystemVersion</key><string>11.0</string>
+        <key>NSHighResolutionCapable</key><true/>
+      </dict>
+      </plist>
+    XML
   end
 
   # The seed daemon (network path only) — launchd replacement for the
@@ -69,6 +104,11 @@ class Bitdvr < Formula
   def caveats
     <<~EOS
       Launch the app with:  bitdvr
+
+      To launch from the Dock instead, link the app bundle into
+      ~/Applications and open it from there (or via Spotlight):
+        ln -sfn "#{opt_prefix}/BitDVR.app" ~/Applications/BitDVR.app
+      then right-click its Dock icon -> Options -> Keep in Dock.
 
       BitDVR drives OBS Studio 28+, installed separately:
         brew install --cask obs
