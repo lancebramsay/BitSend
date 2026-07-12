@@ -35,7 +35,7 @@ class Bitdvr < Formula
        bitdvr-libtorrent-daemon.py].each do |f|
       inreplace libexec/f, "#!/usr/bin/env python3", "#!#{python3}"
     end
-    %w[bitdvr-sync.sh bitdvr-magnet.sh].each do |f|
+    %w[bitdvr-sync.sh bitdvr-magnet.sh bitdvr-dock.sh].each do |f|
       inreplace libexec/f, 'PYTHON="${BITDVR_PYTHON:-python3}"',
                            "PYTHON=\"${BITDVR_PYTHON:-#{python3}}\""
     end
@@ -48,6 +48,7 @@ class Bitdvr < Formula
       "bitdvr-organize" => "bitdvr-organize.sh",
       "bitdvr-sync"     => "bitdvr-sync.sh",
       "bitdvr-magnet"   => "bitdvr-magnet.sh",
+      "bitdvr-dock"     => "bitdvr-dock.sh",
     }.each do |name, target|
       (bin/name).write <<~SH
         #!/bin/bash
@@ -125,11 +126,10 @@ class Bitdvr < Formula
     <<~EOS
       Launch the app with:  bitdvr
 
-      For a permanent Dock launcher, link the app bundle into
-      ~/Applications:
-        ln -sfn "#{opt_prefix}/BitDVR.app" ~/Applications/BitDVR.app
-      then drag BitDVR.app from ~/Applications onto the Dock (or open
-      it and right-click its Dock icon -> Options -> Keep in Dock).
+      For a permanent launcher in the Dock (links the app bundle into
+      ~/Applications and pins it — the Dock restarts briefly):
+        bitdvr-dock
+      Unpin with `bitdvr-dock --remove` or by dragging the icon off.
       Spotlight doesn't index symlinked apps — use the Dock, Finder,
       or the `bitdvr` command.
 

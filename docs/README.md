@@ -85,17 +85,20 @@ GUI. In OBS, set the recording output folder to `~/Movies/OBS`
 permission when macOS asks.
 
 The install also builds a `BitDVR.app` bundle so the app can live in
-your Dock with its own name and icon. Link it into `~/Applications`:
+your Dock with its own name and icon. To put a permanent launcher in
+the Dock, run:
 
 ```sh
-ln -sfn "$(brew --prefix)/opt/bitdvr/BitDVR.app" ~/Applications/BitDVR.app
+bitdvr-dock
 ```
 
-To put a permanent launcher in the Dock, drag `BitDVR.app` from
-`~/Applications` onto the Dock (or open the app and right-click its
-Dock icon → *Options → Keep in Dock*). The symlink stays valid across
-`brew upgrade`. Note that Spotlight doesn't index symlinked apps —
-launch it from the Dock, Finder, or the `bitdvr` command.
+This links the app into `~/Applications` (the link stays valid across
+`brew upgrade`) and pins it to the Dock — the Dock restarts briefly to
+apply. It's a separate opt-in command because `brew install` itself
+can't (and shouldn't) modify your Dock. Unpin with
+`bitdvr-dock --remove`, or just drag the icon off the Dock. Note that
+Spotlight doesn't index symlinked apps — launch BitDVR from the Dock,
+Finder, or the `bitdvr` command.
 
 For the [network path](network-mode.md) only, the seed daemon runs as a
 launchd service managed by Homebrew:
