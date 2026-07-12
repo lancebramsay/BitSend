@@ -17,6 +17,8 @@ running it.
    machine over LAN BitTorrent
 5. [Advanced setup](advanced-setup.md) — Plex/Jellyfin libraries and
    the Deluge BitTorrent client
+6. [Design & architecture](design.md) — why BitDVR is built the way it
+   is (for contributors and the curious)
 
 ## The two paths
 
@@ -45,6 +47,8 @@ the Settings tab.
   system's now-playing info (what the Control Center widget shows) via
   the bundled `media-control` tool — see the note in
   [Basics](basics.md#the-record-tab) about which players publish there.
+  BitDVR's own windows are also hidden from the capture on macOS, so
+  the control panel never appears in your recordings.
 - **[OBS Studio](https://obsproject.com/) 28 or newer** — version 28
   ships with the WebSocket server BitDVR uses for control. Enable it
   under *Tools → WebSocket Server Settings* and set a password.

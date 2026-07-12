@@ -31,6 +31,13 @@ actual capturing, BitDVR does the driving.
 - **Live preview** — a small once-a-second snapshot of OBS's program
   scene, so you can confirm OBS is pointed at the right screen before
   committing to a two-hour recording.
+- **Invisible to the recording** *(macOS)* — BitDVR marks its own
+  windows as excluded from screen capture (the same macOS facility
+  password managers use), so the control panel never shows up in a
+  recording even when it's sitting on the captured screen. On by
+  default; toggle it in Settings. Linux has no per-window exclusion —
+  there, keep BitDVR on a different monitor or workspace than the one
+  OBS captures.
 - **Connection recovery** — if OBS isn't running, or its WebSocket
   connection drops mid-session, BitDVR prompts you to launch/restart
   OBS and retry rather than just failing. A brief drop during an active
@@ -41,13 +48,64 @@ actual capturing, BitDVR does the driving.
 When a recording stops — manually, by timer, or by playback ending —
 BitDVR switches to the Organize tab with the new file pre-loaded.
 
-### Recording quality is OBS's job
+### Setting up the OBS side: scene, output, video
 
-BitDVR records whatever OBS is configured to record. Sensible starting
-points: record to Matroska (`.mkv`, survives interruptions), use your
-GPU's hardware encoder (NVENC/VAAPI/AMF) with quality-based rate
-control, and capture the display or window your player uses. Any OBS
-tutorial on local recording applies as-is.
+BitDVR records whatever OBS is configured to record — it drives OBS's
+active scene but never edits it, so the capture itself is a one-time
+OBS setup. Any OBS tutorial on local recording applies as-is; the
+short version, plus the one genuine gotcha, below.
+
+**Scene & source.** One scene with a single display-capture source is
+all a DVR needs: *macOS Screen Capture* (method: Display) on macOS,
+*Screen Capture (PipeWire)* on Wayland, or *Display Capture (XSHM)* on
+X11. Capture the display you play media on — BitDVR's Record-tab
+preview shows you exactly what OBS sees, so use it to confirm the
+right screen before a long recording. Window or application capture
+can work too, but display capture plus fullscreen playback is the
+combination that never breaks when a player redraws its window or
+switches to fullscreen mid-session.
+
+**Output settings** (*Settings → Output → Recording*): set the
+recording path to `~/Videos/OBS` (macOS: `~/Movies/OBS`) so BitDVR
+finds the files; record to Matroska (`.mkv` — it survives crashes and
+interruptions, and can be remuxed to `.mp4` afterward if something
+needs that); and use your GPU's hardware encoder (Apple VT on macOS,
+NVENC/VAAPI/AMF on Linux) with quality-based rate control rather than
+a fixed low bitrate.
+
+**Video settings** (*Settings → Video*): set the **base (canvas)
+resolution to your display's native resolution** so the capture fills
+the canvas exactly, and the output (scaled) resolution to match it —
+that's the whole story on a 16:9 monitor.
+
+**The 16:10 MacBook wrinkle.** MacBook built-in displays are taller
+than 16:9 (this guide's test machine is 2560×1664, ratio ≈ 1.54 vs
+16:9's 1.78), so a full-screen recording doesn't naturally match a TV
+shape. Two sane setups:
+
+1. **Record the display as-is** (base = output = native). Fullscreen
+   16:9 video arrives with thin black bars baked in above and below
+   (that's what the display showed), and the file has a nonstandard
+   resolution — but every player and TV letterboxes/scales it
+   correctly, so for personal viewing this is the zero-fuss option.
+2. **Produce true 16:9** (a clean 1920×1080 with no baked bars): set
+   base *and* output to 1920×1080, then crop the capture source to the
+   16:9 band of the screen where fullscreen video actually renders.
+   Right-click the source → *Edit Transform*, crop top and bottom by
+   `(display height − display width × 9⁄16) ÷ 2` — for 2560×1664
+   that's (1664 − 1440) ÷ 2 = **112 px each** — then *Fit to screen*.
+   The cropped region is exactly 16:9 and fills the canvas edge to
+   edge.
+
+Either way, confirm with the Record-tab preview and a short test
+recording before trusting it with a movie.
+
+**If the preview or recording shows a frozen, stale image** (macOS):
+macOS periodically re-confirms screen-recording permission, and OBS's
+capture freezes on its last frame until you do. Check *System Settings
+→ Privacy & Security → Screen & System Audio Recording*, make sure OBS
+is enabled (re-toggle it if it already looks enabled), then quit and
+relaunch OBS.
 
 ## The Organize tab
 

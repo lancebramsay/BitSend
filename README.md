@@ -86,6 +86,9 @@ Then head to the **[User Guide](docs/README.md)**:
   machine over LAN BitTorrent
 - [Advanced setup](docs/advanced-setup.md) — configuring Plex/Jellyfin
   libraries and the Deluge BitTorrent client
+- [Design & architecture](docs/design.md) — why BitDVR is built the
+  way it is, from the two-peer BitTorrent delivery to the security
+  posture
 
 Questions, setup help, and ideas are welcome in
 [Discussions](https://github.com/lancebramsay/BitDVR/discussions);
