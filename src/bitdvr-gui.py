@@ -53,7 +53,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -101,7 +101,13 @@ DEFAULT_CONFIG = {
     "local_mode": False,
     "local_library_root": "",
     "hide_from_capture": True,  # macOS only; ignored on Linux
+    "schedules": [],  # [{start: "YYYY-MM-DD HH:MM", minutes, seconds, title}]
 }
+
+# How late a scheduled recording may still start (e.g. the GUI was
+# opened a few minutes after the start time) before it counts as missed.
+SCHED_GRACE_SECONDS = 300
+SCHED_START_FMT = "%Y-%m-%d %H:%M"
 
 
 def load_config():
@@ -398,6 +404,9 @@ class App(tk.Tk):
         self.config = load_config()
         self._capture_hiding_job = None
         self._sync_capture_hiding()
+        self._sched_job = None
+        self._sched_recording = False
+        self._keepawake_proc = None
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="x", padx=8, pady=(8, 0))
@@ -454,6 +463,7 @@ class App(tk.Tk):
         self._refresh_tree()
         self._refresh_clean_tree()
         self._on_tab_changed()
+        self._tick_scheduler()
 
     # ------------------------------------------------------------------ Record
 
@@ -495,8 +505,82 @@ class App(tk.Tk):
             variable=self.mpris_auto_startstop_var, command=self._on_mpris_toggle,
         ).pack(anchor="w")
 
+        # Scheduled recordings — "press Record for me at 19:00". BitDVR
+        # can't tune a channel: whatever should be recorded must already
+        # be on screen at fire time (a live stream left open, etc.), and
+        # the GUI must still be running. While anything is scheduled, a
+        # keep-awake child (caffeinate / systemd-inhibit) stops the
+        # machine from sleeping through it. The whole panel lives behind
+        # a toggle so the everyday press-Record flow isn't buried in
+        # date fields; hiding the panel does NOT cancel pending
+        # schedules — the scheduler engine runs regardless.
+        self.sched_show_var = tk.BooleanVar(value=bool(self.config.get("schedules")))
+        ttk.Checkbutton(
+            mpris_frm, text="Schedule recordings",
+            variable=self.sched_show_var, command=self._on_sched_show_toggle,
+        ).pack(anchor="w")
+        # Visibility also follows the variable itself (not just the
+        # click command) — the handler is idempotent, so double-firing
+        # is harmless and either route alone keeps the panel in sync.
+        self.sched_show_var.trace_add("write", lambda *_: self._on_sched_show_toggle())
+        self.sched_container = ttk.Frame(parent)
+        sched_lf = ttk.LabelFrame(self.sched_container, text="Scheduled recordings")
+        self.sched_lf = sched_lf
+        sched_lf.pack(fill="x")
+        default_start = datetime.now() + timedelta(minutes=30)
+        self.sched_date_var = tk.StringVar(value=default_start.strftime("%Y-%m-%d"))
+        self.sched_time_var = tk.StringVar(value=default_start.strftime("%H:%M"))
+        self.sched_minutes_var = tk.StringVar(value="0")
+        self.sched_seconds_var = tk.StringVar(value="0")
+        self.sched_title_var = tk.StringVar()
+        sched_row = ttk.Frame(sched_lf)
+        sched_row.pack(fill="x", padx=6, pady=(4, 2))
+        ttk.Label(sched_row, text="Start:").pack(side="left")
+        ttk.Entry(sched_row, textvariable=self.sched_date_var, width=11).pack(
+            side="left", padx=(4, 2)
+        )
+        ttk.Entry(sched_row, textvariable=self.sched_time_var, width=6).pack(side="left")
+        ttk.Label(sched_row, text="Record for:").pack(side="left", padx=(12, 0))
+        ttk.Spinbox(
+            sched_row, from_=0, to=999, textvariable=self.sched_minutes_var, width=5
+        ).pack(side="left", padx=(4, 2))
+        ttk.Label(sched_row, text="min").pack(side="left")
+        ttk.Spinbox(
+            sched_row, from_=0, to=59, textvariable=self.sched_seconds_var, width=5
+        ).pack(side="left", padx=(8, 2))
+        ttk.Label(sched_row, text="sec").pack(side="left")
+        ttk.Button(
+            sched_row, text="Grab runtime", command=self._on_sched_grab_runtime,
+        ).pack(side="left", padx=(12, 0))
+        sched_row2 = ttk.Frame(sched_lf)
+        sched_row2.pack(fill="x", padx=6, pady=(2, 4))
+        ttk.Label(sched_row2, text="Title (optional, prefills Organize):").pack(side="left")
+        ttk.Entry(sched_row2, textvariable=self.sched_title_var).pack(
+            side="left", fill="x", expand=True, padx=(4, 8)
+        )
+        ttk.Button(sched_row2, text="Add", command=self._on_sched_add).pack(side="left")
+        sched_list_row = ttk.Frame(sched_lf)
+        sched_list_row.pack(fill="x", padx=6, pady=(0, 6))
+        self.sched_tree = ttk.Treeview(
+            sched_list_row, columns=("start", "runtime", "title"),
+            show="headings", height=3, selectmode="browse",
+        )
+        self.sched_tree.heading("start", text="Start")
+        self.sched_tree.heading("runtime", text="Runtime")
+        self.sched_tree.heading("title", text="Title")
+        self.sched_tree.column("start", width=140, stretch=False)
+        self.sched_tree.column("runtime", width=80, stretch=False)
+        self.sched_tree.column("title", width=200)
+        self.sched_tree.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            sched_list_row, text="Remove", command=self._on_sched_remove,
+        ).pack(side="left", padx=(8, 0), anchor="n")
+        self._refresh_schedule_tree()
+
         btn_frm = ttk.Frame(parent)
         btn_frm.pack(pady=(4, 8))
+        self.rec_btn_frm = btn_frm
+        self._on_sched_show_toggle()
         self.rec_start_btn = ttk.Button(
             btn_frm, text="Start Recording", command=self._on_record_start
         )
@@ -544,6 +628,260 @@ class App(tk.Tk):
     def _tick_capture_hiding(self):
         _macos_apply_capture_hiding(True)
         self._capture_hiding_job = self.after(3000, self._tick_capture_hiding)
+
+    # ------------------------------------------------------ Scheduled records
+
+    def _on_sched_show_toggle(self):
+        show = self.sched_show_var.get()
+        if show:
+            self.sched_container.pack(
+                fill="x", padx=8, pady=(0, 4), before=self.rec_btn_frm
+            )
+        else:
+            self.sched_container.pack_forget()
+        if hasattr(self, "log_text"):  # absent during startup's initial sync
+            self._append_log(f"==> Schedule panel {'shown' if show else 'hidden'}.\n")
+
+    def _on_sched_grab_runtime(self):
+        with_length = [p for p in self._mpris_candidates() if p["length_seconds"]]
+        if not with_length:
+            messagebox.showinfo("Grab runtime", "No active media player is reporting a runtime.")
+            return
+        mins, secs = divmod(int(with_length[0]["length_seconds"]), 60)
+        self.sched_minutes_var.set(str(mins))
+        self.sched_seconds_var.set(str(secs))
+        title = next((p["title"] for p in with_length if p["title"]), None)
+        if title and not self.sched_title_var.get().strip():
+            self.sched_title_var.set(title)
+
+    def _on_sched_add(self):
+        raw = f"{self.sched_date_var.get().strip()} {self.sched_time_var.get().strip()}"
+        try:
+            start = datetime.strptime(raw, SCHED_START_FMT)
+        except ValueError:
+            messagebox.showerror(
+                "Invalid start", "Start must be a date and time like 2026-07-12 19:00."
+            )
+            return
+        if start <= datetime.now():
+            messagebox.showerror("Invalid start", "The start time is in the past.")
+            return
+        try:
+            minutes = int(self.sched_minutes_var.get() or 0)
+            seconds = int(self.sched_seconds_var.get() or 0)
+        except ValueError:
+            messagebox.showerror("Invalid runtime", "Minutes/seconds must be numbers.")
+            return
+        if minutes * 60 + seconds <= 0:
+            messagebox.showerror(
+                "Invalid runtime",
+                "A scheduled recording needs a runtime — it's what stops it "
+                "again with nobody at the keyboard.",
+            )
+            return
+        schedules = list(self.config.get("schedules") or [])
+        schedules.append({
+            "start": start.strftime(SCHED_START_FMT),
+            "minutes": minutes,
+            "seconds": seconds,
+            "title": self.sched_title_var.get().strip(),
+        })
+        schedules.sort(key=lambda s: s.get("start", ""))
+        self.config["schedules"] = schedules
+        save_config(self.config)
+        self.sched_title_var.set("")
+        self._refresh_schedule_tree()
+        self._append_log(
+            f"==> Scheduled recording for {raw} "
+            f"({minutes:02d}:{seconds:02d}). Leave BitDVR open — it'll keep "
+            "the machine awake, but the content must be on screen by then.\n"
+        )
+
+    def _on_sched_remove(self):
+        sel = self.sched_tree.selection()
+        if not sel:
+            return
+        index = int(sel[0])
+        schedules = list(self.config.get("schedules") or [])
+        if 0 <= index < len(schedules):
+            del schedules[index]
+            self.config["schedules"] = schedules
+            save_config(self.config)
+        self._refresh_schedule_tree()
+
+    def _refresh_schedule_tree(self):
+        self.sched_tree.delete(*self.sched_tree.get_children())
+        for i, s in enumerate(self.config.get("schedules") or []):
+            runtime = f"{int(s.get('minutes', 0)):02d}:{int(s.get('seconds', 0)):02d}"
+            self.sched_tree.insert(
+                "", "end", iid=str(i),
+                values=(s.get("start", "?"), runtime, s.get("title", "")),
+            )
+
+    def _tick_scheduler(self):
+        """Wall-clock scheduler, always ticking. A repeating short tick
+        (rather than one long after()) is what makes schedules survive
+        laptop sleep: on wake the very next tick re-compares against
+        real time and fires anything due — or within the grace window,
+        starts late; beyond it, declares the recording missed."""
+        schedules = self.config.get("schedules") or []
+        now = datetime.now()
+        remaining, due = [], []
+        for s in schedules:
+            try:
+                start = datetime.strptime(s.get("start", ""), SCHED_START_FMT)
+            except ValueError:
+                continue  # malformed (hand-edited config) — drop it
+            if start > now:
+                remaining.append(s)
+            elif (now - start).total_seconds() > SCHED_GRACE_SECONDS:
+                label = s.get("title") or s.get("start")
+                self._append_log(
+                    f"==> Missed scheduled recording ({label}) — the start time "
+                    f"passed more than {SCHED_GRACE_SECONDS // 60} minutes ago "
+                    "(was BitDVR closed, or the machine asleep?).\n"
+                )
+                self._notify("BitDVR", f"Missed scheduled recording: {label}")
+            else:
+                due.append(s)
+        if len(remaining) != len(schedules):
+            self.config["schedules"] = remaining
+            save_config(self.config)
+            self._refresh_schedule_tree()
+        for s in due:
+            self._scheduled_fire(s)
+        if self.obs_client is None:
+            self._sched_recording = False
+        self._sync_keepawake(bool(remaining) or bool(due) or self._sched_recording)
+        self._sched_job = self.after(2000, self._tick_scheduler)
+
+    def _scheduled_fire(self, sched, attempt=0):
+        """Start a scheduled recording unattended: no dialogs, ever.
+        If OBS isn't reachable, launch it and retry every 5s for a
+        minute before declaring the recording lost."""
+        label = sched.get("title") or sched.get("start")
+        if self.obs_client is not None:
+            self._append_log(
+                f"==> Scheduled recording ({label}) skipped — another recording "
+                "is already running.\n"
+            )
+            self._notify("BitDVR", f"Schedule skipped (already recording): {label}")
+            return
+        if attempt == 0:
+            self._append_log(f"==> Scheduled recording ({label}) starting...\n")
+            if IS_MACOS:
+                # Wake the display if it dozed off — an asleep display
+                # captures black.
+                try:
+                    subprocess.Popen(
+                        ["caffeinate", "-u", "-t", "3"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                except OSError:
+                    pass
+            if secret_lookup(OBS_SECRET_SERVICE, "obs-websocket") is None:
+                self._append_log(
+                    "==> Scheduled recording failed: no OBS password stored yet. "
+                    "Start one recording by hand first so BitDVR can store it.\n"
+                )
+                self._notify("BitDVR", f"Schedule failed (no stored OBS password): {label}")
+                return
+
+        client = self._get_obs_client_silent()
+        if client is None:
+            if attempt == 0:
+                self._append_log("    OBS not reachable — launching it and retrying...\n")
+                self._launch_obs()
+            if attempt < 12:
+                self.after(5000, lambda: self._scheduled_fire(sched, attempt + 1))
+            else:
+                self._append_log(
+                    f"==> Scheduled recording ({label}) failed: OBS never became "
+                    "reachable within a minute of the start time.\n"
+                )
+                self._notify("BitDVR", f"Schedule failed (no OBS connection): {label}")
+            return
+
+        self.rec_use_timer_var.set(True)
+        self.rec_minutes_var.set(str(int(sched.get("minutes", 0))))
+        self.rec_seconds_var.set(str(int(sched.get("seconds", 0))))
+        self._rec_on_timer_toggle()
+        title = (sched.get("title") or "").strip()
+        if title:
+            self.org_title_var.set(title)
+        self._start_recording(silent=True, client=client)
+        if self.obs_client is not None:
+            self._sched_recording = True
+            self._notify("BitDVR", f"Scheduled recording started: {label}")
+        else:
+            self._notify("BitDVR", f"Scheduled recording failed to start: {label}")
+
+    def _get_obs_client_silent(self):
+        """Connect to OBS without any dialog — for scheduler fire time,
+        when nobody is at the keyboard. Returns None on any failure."""
+        if obs is None:
+            return None
+        pw = secret_lookup(OBS_SECRET_SERVICE, "obs-websocket")
+        if pw is None:
+            return None
+        try:
+            return obs.ReqClient(
+                host=self.config["obs_host"], port=self.config["obs_port"],
+                password=pw, timeout=5,
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _launch_obs():
+        try:
+            if IS_MACOS:
+                subprocess.Popen(
+                    ["open", "-a", "OBS"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            path = shutil.which("obs")
+            if path:
+                subprocess.Popen(
+                    [path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return True
+        except OSError:
+            pass
+        return False
+
+    def _sync_keepawake(self, want):
+        """Hold the machine awake while a scheduled recording is pending
+        or running. The child ties its own lifetime to this process
+        (caffeinate -w / tail --pid), so a crashed GUI can't leave the
+        machine insomniac."""
+        if self._keepawake_proc is not None and self._keepawake_proc.poll() is not None:
+            self._keepawake_proc = None
+        if want and self._keepawake_proc is None:
+            if IS_MACOS:
+                cmd = ["caffeinate", "-di", "-w", str(os.getpid())]
+            elif shutil.which("systemd-inhibit"):
+                cmd = [
+                    "systemd-inhibit", "--what=idle:sleep", "--who=BitDVR",
+                    "--why=Scheduled recording pending", "--mode=block",
+                    "tail", "--pid", str(os.getpid()), "-f", "/dev/null",
+                ]
+            else:
+                return  # no inhibitor available; scheduling still works while awake
+            try:
+                self._keepawake_proc = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self._append_log(
+                    "==> Keeping the machine awake until scheduled recordings finish.\n"
+                )
+            except OSError:
+                self._keepawake_proc = None
+        elif not want and self._keepawake_proc is not None:
+            self._keepawake_proc.terminate()
+            self._keepawake_proc = None
 
     def _sync_mpris_polling(self):
         """MPRIS polling runs independent of which tab is showing, so
@@ -723,7 +1061,7 @@ class App(tk.Tk):
     def _on_record_start(self):
         self._start_recording(silent=False)
 
-    def _start_recording(self, silent=False):
+    def _start_recording(self, silent=False, client=None):
         use_timer = self.rec_use_timer_var.get()
         total_seconds = 0
         if use_timer:
@@ -757,7 +1095,11 @@ class App(tk.Tk):
             file=self.record_log_file,
         )
 
-        client = self._get_obs_client()
+        # The scheduler passes in a connection it already established
+        # silently — _get_obs_client is interactive (password prompt,
+        # retry dialogs), which must never fire with nobody at the desk.
+        if client is None:
+            client = self._get_obs_client()
         if client is None:
             self._append_log("==> Cancelled (no OBS connection).\n", file=self.record_log_file)
             self.record_log_file.close()
@@ -1031,7 +1373,7 @@ class App(tk.Tk):
         export_frm.pack(fill="x", padx=8, pady=12)
         ttk.Label(
             export_frm,
-            text="Settings file (host/port only — passwords never leave the keyring):",
+            text="Settings file (hosts, options, schedules — passwords never leave the keyring):",
         ).pack(anchor="w", pady=(0, 6))
         export_btn_row = ttk.Frame(export_frm)
         export_btn_row.pack(anchor="w")
@@ -1105,6 +1447,7 @@ class App(tk.Tk):
         self._on_local_mode_toggle()
         self._apply_local_mode()
         self._sync_capture_hiding()
+        self._refresh_schedule_tree()
         messagebox.showinfo("Import Settings", "Settings imported and applied.")
 
     def _on_settings_save(self):
@@ -1140,6 +1483,9 @@ class App(tk.Tk):
             "local_mode": local_mode,
             "local_library_root": local_library_root,
             "hide_from_capture": self.set_hide_capture_var.get(),
+            # Not a Settings-tab field — carry the pending schedules
+            # through rather than silently wiping them on every Save.
+            "schedules": self.config.get("schedules", []),
         }
         save_config(self.config)
         self._apply_local_mode()

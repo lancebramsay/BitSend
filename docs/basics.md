@@ -28,6 +28,21 @@ actual capturing, BitDVR does the driving.
   recording when playback starts and stops it when playback pauses or
   stops. Set the timer or just use this, put the movie on, and walk
   away. Reads the same now-playing source as Grab runtime.
+- **Scheduled recordings** — tick the *Schedule recordings* box to
+  reveal the panel (it stays out of the way otherwise), then queue a
+  start time, a runtime (type it, or *Grab runtime* from a queued-up
+  player), and an optional title that prefills the Organize tab
+  afterward. At the start time BitDVR
+  begins recording and the runtime stops it — launching OBS itself if
+  it isn't running, and holding the machine awake (via `caffeinate` on
+  macOS, `systemd-inhibit` on Linux) while anything is scheduled. Two
+  honest limits: BitDVR records the screen, so *the content must be
+  playing on screen at that time* — a schedule can press Record for
+  you, it can't tune a channel — and the BitDVR window must still be
+  open. A schedule that comes due while BitDVR is closed (or more
+  than 5 minutes late, e.g. the machine was asleep) is declared
+  missed, with a note in the log; up to 5 minutes late, it starts
+  late instead. Schedules survive restarting BitDVR.
 - **Live preview** — a small once-a-second snapshot of OBS's program
   scene, so you can confirm OBS is pointed at the right screen before
   committing to a two-hour recording.
