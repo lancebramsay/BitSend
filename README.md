@@ -94,9 +94,7 @@ reproducible bugs belong in
 
 ## Requirements at a glance
 
-- Linux with a desktop session, or macOS (via Homebrew — one macOS
-  limitation: auto start/stop with playback is Linux-only, since macOS
-  has no public now-playing API)
+- Linux with a desktop session, or macOS (via Homebrew)
 - [OBS Studio](https://obsproject.com/) 28+ (obs-websocket built in)
 - Python 3 with Tkinter
 - [libtorrent](https://libtorrent.org/) Python bindings and `jq`

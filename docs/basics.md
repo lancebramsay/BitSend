@@ -16,13 +16,18 @@ actual capturing, BitDVR does the driving.
   itself. Manual Stop still works, so an over-generous estimate costs
   nothing.
 - **Grab runtime** — one click fills the timer from whatever your media
-  player is currently playing (or has paused), read via the standard
-  MPRIS desktop interface. Works with most Linux media players and
-  browsers.
+  player is currently playing (or has paused), read from the desktop's
+  now-playing info: the MPRIS interface on Linux, the system now-playing
+  item (what Control Center shows) on macOS. Works with most media
+  players and browsers on both platforms; on macOS the player has to
+  publish to Now Playing (browsers, Music, Spotify, and TV do — QuickTime
+  Player doesn't), and the readout goes through a community shim around a
+  private Apple framework, so a macOS update can knock it out until the
+  shim catches up (everything else keeps working).
 - **Auto start/stop recording with playback** — a toggle that starts
   recording when playback starts and stops it when playback pauses or
   stops. Set the timer or just use this, put the movie on, and walk
-  away.
+  away. Reads the same now-playing source as Grab runtime.
 - **Live preview** — a small once-a-second snapshot of OBS's program
   scene, so you can confirm OBS is pointed at the right screen before
   committing to a two-hour recording.
@@ -59,7 +64,8 @@ The file picker defaults to your newest recording. Then:
   A year makes movie matching dramatically more reliable; it applies
   under the movies library only.
 - **Grab title** — one click pulls the currently-playing title from
-  your media player (MPRIS again), so you don't retype it.
+  your media player (the same now-playing source as Grab runtime), so
+  you don't retype it.
 - **Part of a series** — reveals Series / Season / Episode fields,
   available under *either* library (a movie trilogy can be a "series"
   too). This produces the `Series Name/Season 01/Series Name -

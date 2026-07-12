@@ -40,10 +40,11 @@ the Settings tab.
 - **Linux** with a desktop session (X11 or Wayland), or **macOS**
   (installed via Homebrew — see below). On macOS every dependency in
   this list comes in automatically with `brew install`, and passwords
-  live in the login Keychain instead of the desktop keyring. One
-  limitation: *auto start/stop recording with playback* and the *Grab
-  runtime/title* buttons are Linux-only (they read MPRIS, and macOS has
-  no public now-playing API).
+  live in the login Keychain instead of the desktop keyring. The *Grab
+  runtime/title* buttons and *auto start/stop with playback* read the
+  system's now-playing info (what the Control Center widget shows) via
+  the bundled `media-control` tool — see the note in
+  [Basics](basics.md#the-record-tab) about which players publish there.
 - **[OBS Studio](https://obsproject.com/) 28 or newer** — version 28
   ships with the WebSocket server BitDVR uses for control. Enable it
   under *Tools → WebSocket Server Settings* and set a password.

@@ -87,6 +87,10 @@ LOG_DIR = Path.home() / ".local" / "share" / "bitdvr" / "logs"
 CONFIG_DIR = Path.home() / ".config" / "bitdvr"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SECRET_TOOL = "secret-tool"
+# macOS only: the now-playing reader behind Grab runtime/title and auto
+# start/stop. The Homebrew formula rewrites the default to media-control's
+# opt path — Dock-launched apps don't have Homebrew's bin on PATH.
+MEDIA_CONTROL = os.environ.get("BITDVR_MEDIA_CONTROL", "media-control")
 SECRET_SERVICE = "bitdvr-deluge-web"
 OBS_SECRET_SERVICE = "bitdvr-obs-websocket"
 DEFAULT_CONFIG = {
@@ -209,10 +213,45 @@ def _mpris_get_property(dest, prop):
         return None
 
 
+def _macos_now_playing():
+    """The system-wide now-playing item (what Control Center shows), read
+    with media-control — which reaches the private MediaRemote framework
+    through the community mediaremote-adapter shim, the only route left
+    since Apple locked the framework down in macOS 15.4. Returns the
+    payload dict, or None if nothing is registered / the tool is missing
+    / a macOS update has broken the shim."""
+    try:
+        proc = subprocess.run(
+            [MEDIA_CONTROL, "get"], capture_output=True, text=True, timeout=3,
+        )
+        if proc.returncode != 0:
+            return None
+        payload = json.loads(proc.stdout)
+        return payload if isinstance(payload, dict) and payload else None
+    except Exception:
+        return None
+
+
 def mpris_snapshot():
-    """Returns [{name, status, length_seconds, title}] for every active MPRIS
-    player. status is None if the player didn't answer (e.g. it vanished
-    between the list call and the property call)."""
+    """Returns [{name, status, length_seconds, title}] for every active
+    media player. Linux: every org.mpris.MediaPlayer2.* name on the
+    session bus. macOS: the single system now-playing item, mapped onto
+    the same shape — an item that isn't currently playing reports as
+    Paused, so its metadata stays grabbable exactly like a paused MPRIS
+    player's."""
+    if IS_MACOS:
+        item = _macos_now_playing()
+        if item is None:
+            return []
+        length = item.get("duration")
+        if not (isinstance(length, (int, float)) and length > 0):
+            length = None
+        return [{
+            "name": item.get("bundleIdentifier") or "now-playing",
+            "status": "Playing" if item.get("playing") else "Paused",
+            "length_seconds": length,
+            "title": item.get("title") or None,
+        }]
     players = []
     for name in _mpris_names():
         status = _mpris_get_property(name, "PlaybackStatus")
@@ -397,15 +436,8 @@ class App(tk.Tk):
         )
         self.rec_sec_spin.grid(row=0, column=3, padx=(8, 2))
         ttk.Label(frm, text="sec").grid(row=0, column=4, sticky="w")
-        # The MPRIS-driven conveniences (Grab runtime/title, auto
-        # start/stop with playback) have no macOS equivalent — the only
-        # system-wide now-playing source there is the private MediaRemote
-        # framework, which Apple locked down in macOS 15.4. Shown but
-        # disabled rather than hidden, so the Linux/macOS UIs stay
-        # recognizably the same app.
         ttk.Button(
             frm, text="Grab runtime", command=self._on_grab_runtime,
-            state="disabled" if IS_MACOS else "normal",
         ).grid(row=0, column=5, padx=(12, 0))
         ttk.Label(
             frm, text="(uncheck for manual stop only — Stop is always available either way)"
@@ -414,13 +446,9 @@ class App(tk.Tk):
         self.mpris_auto_startstop_var = tk.BooleanVar(value=False)
         mpris_frm = ttk.Frame(parent)
         mpris_frm.pack(fill="x", padx=8, pady=(0, 4))
-        auto_text = "Auto start/stop recording with playback"
-        if IS_MACOS:
-            auto_text += " (not available on macOS — no media-player status API)"
         ttk.Checkbutton(
-            mpris_frm, text=auto_text,
+            mpris_frm, text="Auto start/stop recording with playback",
             variable=self.mpris_auto_startstop_var, command=self._on_mpris_toggle,
-            state="disabled" if IS_MACOS else "normal",
         ).pack(anchor="w")
 
         btn_frm = ttk.Frame(parent)
@@ -474,10 +502,10 @@ class App(tk.Tk):
         if self.mpris_auto_startstop_var.get():
             if is_playing and not self.mpris_was_playing and self.obs_client is None:
                 label = playing[0]["title"] or playing[0]["name"]
-                self._append_log(f"==> MPRIS: playback started ({label}) — auto-starting recording.\n")
+                self._append_log(f"==> Playback started ({label}) — auto-starting recording.\n")
                 self._start_recording(silent=True)
             elif not is_playing and self.mpris_was_playing and self.obs_client is not None:
-                self._append_log("==> MPRIS: playback stopped.\n")
+                self._append_log("==> Playback stopped.\n")
                 self._stop_record("playback ended")
 
         self.mpris_was_playing = is_playing
@@ -1093,7 +1121,6 @@ class App(tk.Tk):
         ttk.Entry(title_row, textvariable=self.org_title_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(
             title_row, text="Grab title", command=self._on_grab_title,
-            state="disabled" if IS_MACOS else "normal",
         ).grid(row=0, column=2, padx=(6, 0))
 
         self.org_year_row = ttk.Frame(frm)

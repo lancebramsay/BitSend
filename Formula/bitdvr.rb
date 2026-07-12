@@ -23,6 +23,16 @@ class Bitdvr < Formula
   depends_on "python-tk@3.14"
   depends_on "python@3.14"
 
+  on_macos do
+    # Now-playing reader behind Grab runtime/title and auto start/stop —
+    # the macOS stand-in for the MPRIS bus the GUI reads on Linux. It
+    # reaches the private MediaRemote framework through the community
+    # mediaremote-adapter shim, so a macOS update can break it until the
+    # shim catches up; the GUI degrades gracefully (those controls just
+    # find no player) rather than failing.
+    depends_on "media-control"
+  end
+
   def install
     python3 = Formula["python@3.14"].opt_bin/"python3.14"
 
@@ -38,6 +48,14 @@ class Bitdvr < Formula
     %w[bitdvr-sync.sh bitdvr-magnet.sh bitdvr-dock.sh].each do |f|
       inreplace libexec/f, 'PYTHON="${BITDVR_PYTHON:-python3}"',
                            "PYTHON=\"${BITDVR_PYTHON:-#{python3}}\""
+    end
+    if OS.mac?
+      # Dock-launched apps get the bare system PATH, so media-control
+      # must be resolved by absolute path.
+      media_control = Formula["media-control"].opt_bin/"media-control"
+      inreplace libexec/"bitdvr-gui.py",
+                'MEDIA_CONTROL = os.environ.get("BITDVR_MEDIA_CONTROL", "media-control")',
+                "MEDIA_CONTROL = os.environ.get(\"BITDVR_MEDIA_CONTROL\", \"#{media_control}\")"
     end
 
     # Exec wrappers rather than symlinks: the shell scripts locate their
