@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Persistent libtorrent seed daemon for BitDVR — replaces transmission-daemon.
+# Persistent libtorrent seed daemon for BitSend.
 # Deluge on the receiving box is itself built on libtorrent; seeding with
 # same library removes Transmission's independent BT implementation from
-# the picture (see bitdvr-sync.sh for why that mattered).
+# the picture (see bitsend-sync.sh for why that mattered).
 #
-# Watches ~/.config/bitdvr-libtorrent-daemon/watch/ for *.torrent files,
+# Watches ~/.config/bitsend-libtorrent-daemon/watch/ for *.torrent files,
 # each paired with a *.torrent.json sidecar giving save_path, and seeds
 # them in seed_mode (skips hash-checking — the file is assumed complete
 # since it was just used to build the torrent). Deleting a .torrent from
@@ -12,16 +12,16 @@
 # this should only ever be reachable on the LAN, matching the old
 # transmission-daemon's lockdown.
 #
-# The sidecar may also carry peers: ["ip:port", ...] (bitdvr-sync.sh
+# The sidecar may also carry peers: ["ip:port", ...] (bitsend-sync.sh
 # writes Deluge's own listen port there) — those are dialed OUTBOUND on
 # add, and re-dialed periodically while the torrent has no connected
 # peers. This is what makes sends work on segmented LANs where the
-# recording machine may open connections to the server VLAN but inbound
+# sending machine may open connections to the server VLAN but inbound
 # connections back to it are dropped: waiting to be dialed would mean
 # 0 seeds forever, dialing out works in both worlds.
 #
 # Tracked by (filename, mtime) pairs, not filename alone — a resend using
-# the same organized title (same watch-dir filename) overwrites the file
+# the same name (same watch-dir filename) overwrites the file
 # with genuinely different content (a different info-hash), and keying
 # purely on filename made the daemon think it already had that name
 # covered, silently continuing to seed the stale torrent under that slot
@@ -35,8 +35,10 @@ import time
 
 import libtorrent as lt
 
-WATCH_DIR = os.path.expanduser("~/.config/bitdvr-libtorrent-daemon/watch")
-PORT = 51413
+WATCH_DIR = os.path.expanduser("~/.config/bitsend-libtorrent-daemon/watch")
+# Not BitDVR's 51413, so the two daemons can run side by side. Must match
+# bitsend-sync.sh.
+PORT = int(os.environ.get("BITSEND_PEER_PORT", "51414"))
 
 
 def main():

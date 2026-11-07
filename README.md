@@ -1,127 +1,83 @@
-# BitDVR
+# BitSend
 
-**A personal DVR for your desktop.** BitDVR is a small taskbar app that
-records what's playing on your screen, names and files the recording
-the way media servers like Plex and Jellyfin expect, and — if your
-media server lives on another machine — delivers it there over a
-private, LAN-only BitTorrent transfer. Think of it as a modern VCR:
-press record, get a neatly labeled tape, put the tape on the shelf.
+**Send albums to your media server over a private, LAN-only BitTorrent
+transfer.** BitSend is a small desktop app for getting a music collection,
+such as freshly ripped CDs, onto Plex or Jellyfin on another machine. It only
+calls a send done once the server confirms the album landed. No SSH, Samba,
+or NFS to open on the server.
 
-BitDVR doesn't capture video itself — it drives
-[OBS Studio](https://obsproject.com/), the same free recording software
-used by streamers everywhere, and handles everything around it:
-start/stop control with an auto-stop timer, pulling the title and
-runtime from whatever's playing, renaming files into
-`Show - S01E02.mkv`-style names, sorting them into `Movies/` and `TV/`
-folders, and getting the finished file onto your media server.
+BitSend is a fork of [BitDVR](https://github.com/lancebramsay/BitDVR) cut down
+to music. It keeps BitDVR's delivery design: a swarm of exactly two machines
+you own. For recording, movies, and TV, use BitDVR.
 
 ## What it does
 
-- **Record** — start/stop OBS from a simple GUI, with a live preview,
-  an auto-stop timer, optional auto start/stop tied to your media
-  player's playback state, and one-click OBS setup with opt-in quality
-  presets matched to your display. A Restart Capture button unfreezes
-  a stuck screen-capture feed (a known macOS quirk) without opening
-  OBS — safe even mid-recording.
-- **Organize** — rename and file recordings using the folder and naming
-  conventions Plex and Jellyfin actually scan for (movies with years,
-  shows with seasons and episode numbers).
-- **Send** *(network path)* — transfer finished recordings to a media
-  server on another machine as a direct, two-peer BitTorrent transfer.
-  No public trackers, no DHT, no strangers: every torrent is trackerless
-  and flagged private, and the transfer never leaves your LAN.
-- **Local mode** *(local path)* — if BitDVR runs on the same machine as
-  your media server, skip the network entirely and organize recordings
-  straight into your library folder.
+- **Send** — pick an album, an artist, or everything in your music folder.
+  Each album gets its own torrent, and each one is checked before the first is
+  sent: audio present, no rip still running, not already sent. BitSend waits
+  until the album reaches your library, then stops seeding, removes the
+  finished torrent from Deluge (the files stay), and moves your local copy to
+  a `sent` folder. A failed send stays put and can be retried.
+- **Clean** — delete archived local copies once you're happy they arrived.
 
 ## What it doesn't do
 
-BitDVR is built for recording **your own content, for your own private
-viewing, on your own network** — the same personal fair use that has
-covered home recording since the VCR. Deliberately:
+BitSend moves **your own files, between your own machines**. Deliberately:
 
-- **No DRM circumvention.** It captures what your screen renders during
-  normal playback; it never decrypts or bypasses any copy protection.
 - **No downloading.** It cannot fetch content from the internet —
-  BitTorrent is used purely as a delivery mechanism between two
-  machines you own.
-- **No sharing.** Its torrents are invisible to public trackers and DHT
-  by design, and distributing recordings to anyone outside your
-  household is neither supported nor condoned.
+  BitTorrent is used purely as a delivery mechanism between two machines.
+- **No sharing.** Torrents have no trackers and are flagged private, and
+  the seed daemon disables DHT, local peer discovery, and port mapping.
+- **No DRM circumvention.** It copies files as they are.
 
-Recording may also be restricted by the **terms of service of paid
-streaming platforms** regardless of copyright law — that's on you to
-check. See [LEGAL.md](LEGAL.md) for the fair-use basis, the case law
-behind it, and the full disclaimer. Good starting points:
-[Fair use](https://en.wikipedia.org/wiki/Fair_use) ·
-[Time shifting](https://en.wikipedia.org/wiki/Time_shifting) ·
-[17 U.S.C. § 107](https://www.law.cornell.edu/uscode/text/17/107).
+See [LEGAL.md](LEGAL.md).
 
 ## Getting started
 
 **Linux:**
 
 ```sh
-git clone https://github.com/lancebramsay/BitDVR.git
-cd BitDVR
+git clone https://github.com/lancebramsay/BitSend.git
+cd BitSend
 ./install.sh
 ```
 
 **macOS (Homebrew):**
 
 ```sh
-brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
-brew trust lancebramsay/bitdvr
-brew install --HEAD bitdvr
-brew install --cask obs   # if you don't have OBS Studio yet
-bitdvr
+brew tap lancebramsay/bitsend https://github.com/lancebramsay/BitSend.git
+brew trust lancebramsay/bitsend
+brew install --HEAD bitsend
+brew services start bitsend
+bitsend
 ```
 
 Then head to the **[User Guide](docs/README.md)**:
 
-- [Getting started](docs/README.md) — requirements, installation, and
-  choosing between the local and network paths
-- [Basics: recording & organizing](docs/basics.md) — the workflow every
-  setup shares
-- [Local path](docs/local-mode.md) — BitDVR on the same machine as your
-  media server
-- [Network path](docs/network-mode.md) — sending recordings to another
-  machine over LAN BitTorrent
-- [Advanced setup](docs/advanced-setup.md) — configuring Plex/Jellyfin
-  libraries and the Deluge BitTorrent client
-- [Design & architecture](docs/design.md) — why BitDVR is built the
-  way it is, from the two-peer BitTorrent delivery to the security
-  posture
-
-Questions, setup help, and ideas are welcome in
-[Discussions](https://github.com/lancebramsay/BitDVR/discussions);
-reproducible bugs belong in
-[Issues](https://github.com/lancebramsay/BitDVR/issues).
+- [Getting started](docs/README.md) — requirements, installation, first run
+- [Sending](docs/sending.md) — the Send and Clean tabs, sending albums from
+  the command line, troubleshooting
+- [Advanced setup](docs/advanced-setup.md) — media server libraries and the
+  Deluge BitTorrent client
+- [Design & architecture](docs/design.md) — why it's built this way
 
 ## Requirements at a glance
 
 - Linux with a desktop session, or macOS (via Homebrew)
-- [OBS Studio](https://obsproject.com/) 28+ (obs-websocket built in)
 - Python 3 with Tkinter
 - [libtorrent](https://libtorrent.org/) Python bindings and `jq`
-  (network path only)
 - A media server such as [Plex](https://www.plex.tv/) or
-  [Jellyfin](https://jellyfin.org/), with
-  [Deluge](https://deluge-torrent.org/) alongside it for the network
-  path
+  [Jellyfin](https://jellyfin.org/), with Deluge and its web UI on the same
+  machine
 
 ## License
 
-BitDVR is free and open source under the
-[GNU General Public License v3.0](LICENSE). It comes with **no
-warranty** and its authors accept **no liability** for how it is used
-(GPL-3.0 §§15–16). Vendored dependencies keep their own licenses:
-[`obsws-python`](src/vendor/obsws_python/LICENSE) (GPL-3.0),
-[`websocket-client`](src/vendor/websocket/LICENSE) (Apache-2.0).
+BitSend is free and open source under the
+[GNU General Public License v3.0](LICENSE), as was BitDVR before it. It
+comes with **no warranty** and its authors accept **no liability** for how
+it is used (GPL-3.0 §§15–16).
 
-The project artwork ([`docs/assets/social-preview.png`](docs/assets/social-preview.png))
-and the macOS app icon ([`docs/assets/bitdvr.icns`](docs/assets/bitdvr.icns))
-incorporate the `video-television` icon from KDE's
-[Breeze icon theme](https://invent.kde.org/frameworks/breeze-icons)
-(LGPL-3.0-or-later) — the same theme icon the app uses on the Linux
-desktop.
+The macOS app icon ([`docs/assets/bitsend.icns`](docs/assets/bitsend.icns))
+is carried over from BitDVR and incorporates the `video-television` icon from
+KDE's [Breeze icon theme](https://invent.kde.org/frameworks/breeze-icons)
+(LGPL-3.0-or-later).

@@ -1,18 +1,18 @@
-# BitDVR Homebrew formula — the repo itself is the tap:
+# BitSend Homebrew formula — the repo itself is the tap:
 #
-#   brew tap lancebramsay/bitdvr https://github.com/lancebramsay/BitDVR.git
-#   brew trust lancebramsay/bitdvr
-#   brew install --HEAD bitdvr
+#   brew tap lancebramsay/bitsend https://github.com/lancebramsay/BitSend.git
+#   brew trust lancebramsay/bitsend
+#   brew install --HEAD bitsend
 #
 # Head-only until the first tagged GitHub release; when one exists, add
-#   url "https://github.com/lancebramsay/BitDVR/archive/refs/tags/vX.Y.Z.tar.gz"
+#   url "https://github.com/lancebramsay/BitSend/archive/refs/tags/vX.Y.Z.tar.gz"
 #   sha256 "<shasum -a 256 of that tarball>"
-# and plain `brew install bitdvr` starts working.
-class Bitdvr < Formula
-  desc "Personal DVR: drive OBS, organize recordings, deliver over LAN BitTorrent"
-  homepage "https://github.com/lancebramsay/BitDVR"
+# and plain `brew install bitsend` starts working.
+class Bitsend < Formula
+  desc "Send albums to a media server over private LAN BitTorrent"
+  homepage "https://github.com/lancebramsay/BitSend"
   license "GPL-3.0-or-later"
-  head "https://github.com/lancebramsay/BitDVR.git", branch: "main"
+  head "https://github.com/lancebramsay/BitSend.git", branch: "main"
 
   depends_on "jq"
   # libtorrent-rasterbar builds its Python bindings against Homebrew's
@@ -23,16 +23,6 @@ class Bitdvr < Formula
   depends_on "python-tk@3.14"
   depends_on "python@3.14"
 
-  on_macos do
-    # Now-playing reader behind Grab runtime/title and auto start/stop —
-    # the macOS stand-in for the MPRIS bus the GUI reads on Linux. It
-    # reaches the private MediaRemote framework through the community
-    # mediaremote-adapter shim, so a macOS update can break it until the
-    # shim catches up; the GUI degrades gracefully (those controls just
-    # find no player) rather than failing.
-    depends_on "media-control"
-  end
-
   def install
     python3 = Formula["python@3.14"].opt_bin/"python3.14"
 
@@ -41,41 +31,30 @@ class Bitdvr < Formula
     # Pin the interpreter the same way install.sh does on Linux: shebangs
     # for the Python entry points, $PYTHON default for the shell scripts
     # that invoke the torrent helpers.
-    %w[bitdvr-gui.py bitdvr-create-torrent.py bitdvr-magnet-uri.py
-       bitdvr-libtorrent-daemon.py].each do |f|
+    %w[bitsend-gui.py bitsend-create-torrent.py bitsend-libtorrent-daemon.py].each do |f|
       inreplace libexec/f, "#!/usr/bin/env python3", "#!#{python3}"
     end
-    %w[bitdvr-sync.sh bitdvr-magnet.sh bitdvr-dock.sh].each do |f|
-      inreplace libexec/f, 'PYTHON="${BITDVR_PYTHON:-python3}"',
-                           "PYTHON=\"${BITDVR_PYTHON:-#{python3}}\""
+    %w[bitsend-sync.sh bitsend-dock.sh].each do |f|
+      inreplace libexec/f, 'PYTHON="${BITSEND_PYTHON:-python3}"',
+                           "PYTHON=\"${BITSEND_PYTHON:-#{python3}}\""
     end
-    if OS.mac?
-      # Dock-launched apps get the bare system PATH, so media-control
-      # must be resolved by absolute path.
-      media_control = Formula["media-control"].opt_bin/"media-control"
-      inreplace libexec/"bitdvr-gui.py",
-                'MEDIA_CONTROL = os.environ.get("BITDVR_MEDIA_CONTROL", "media-control")',
-                "MEDIA_CONTROL = os.environ.get(\"BITDVR_MEDIA_CONTROL\", \"#{media_control}\")"
-    end
-
     # Exec wrappers rather than symlinks: the shell scripts locate their
     # sibling helpers via dirname of $BASH_SOURCE without resolving
     # symlinks, so they must actually run from libexec.
     {
-      "bitdvr"          => "bitdvr-gui.py",
-      "bitdvr-organize" => "bitdvr-organize.sh",
-      "bitdvr-sync"     => "bitdvr-sync.sh",
-      "bitdvr-magnet"   => "bitdvr-magnet.sh",
-      "bitdvr-dock"     => "bitdvr-dock.sh",
+      "bitsend"          => "bitsend-gui.py",
+      "bitsend-sync"     => "bitsend-sync.sh",
+      "bitsend-music"    => "bitsend-music.sh",
+      "bitsend-dock"     => "bitsend-dock.sh",
     }.each do |name, target|
       (bin/name).write <<~SH
         #!/bin/bash
         exec "#{opt_libexec}/#{target}" "$@"
       SH
     end
-    chmod 0755, Dir[bin/"bitdvr*"]
+    chmod 0755, Dir[bin/"bitsend*"]
 
-    # A minimal BitDVR.app so the GUI lives in the Dock like a real app —
+    # A minimal BitSend.app so the GUI lives in the Dock like a real app —
     # the macOS counterpart of the .desktop entry install.sh writes on
     # Linux. Users symlink it into ~/Applications (see caveats) — a
     # symlink to opt_prefix survives upgrades, a copy wouldn't.
@@ -96,33 +75,33 @@ class Bitdvr < Formula
     python_keg = Formula["python@3.14"]
     pyhome = python_keg.opt_prefix/"Frameworks/Python.framework/Versions/3.14"
 
-    app = prefix/"BitDVR.app"
+    app = prefix/"BitSend.app"
     (app/"Contents/MacOS").mkpath
-    app_python = app/"Contents/MacOS/BitDVR-python"
+    app_python = app/"Contents/MacOS/BitSend-python"
     cp pyhome/"Resources/Python.app/Contents/MacOS/Python", app_python
     system "install_name_tool", "-change",
            python_keg.prefix/"Frameworks/Python.framework/Versions/3.14/Python",
            pyhome/"Python", app_python
     system "codesign", "-f", "-s", "-", app_python
-    (app/"Contents/MacOS/BitDVR").write <<~SH
+    (app/"Contents/MacOS/BitSend").write <<~SH
       #!/bin/bash
       HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
       export PYTHONHOME="#{pyhome}"
-      exec "$HERE/BitDVR-python" "#{opt_libexec}/bitdvr-gui.py" "$@"
+      exec "$HERE/BitSend-python" "#{opt_libexec}/bitsend-gui.py" "$@"
     SH
-    chmod 0755, [app/"Contents/MacOS/BitDVR", app_python]
-    (app/"Contents/Resources").install "docs/assets/bitdvr.icns"
+    chmod 0755, [app/"Contents/MacOS/BitSend", app_python]
+    (app/"Contents/Resources").install "docs/assets/bitsend.icns"
     (app/"Contents/Info.plist").write <<~XML
       <?xml version="1.0" encoding="UTF-8"?>
       <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
       <plist version="1.0">
       <dict>
         <key>CFBundlePackageType</key><string>APPL</string>
-        <key>CFBundleName</key><string>BitDVR</string>
-        <key>CFBundleDisplayName</key><string>BitDVR</string>
-        <key>CFBundleIdentifier</key><string>com.github.lancebramsay.bitdvr</string>
-        <key>CFBundleExecutable</key><string>BitDVR</string>
-        <key>CFBundleIconFile</key><string>bitdvr</string>
+        <key>CFBundleName</key><string>BitSend</string>
+        <key>CFBundleDisplayName</key><string>BitSend</string>
+        <key>CFBundleIdentifier</key><string>com.github.lancebramsay.bitsend</string>
+        <key>CFBundleExecutable</key><string>BitSend</string>
+        <key>CFBundleIconFile</key><string>bitsend</string>
         <key>CFBundleShortVersionString</key><string>#{version}</string>
         <key>LSMinimumSystemVersion</key><string>11.0</string>
         <key>NSHighResolutionCapable</key><true/>
@@ -134,43 +113,34 @@ class Bitdvr < Formula
   # The seed daemon (network path only) — launchd replacement for the
   # systemd --user unit install.sh sets up on Linux.
   service do
-    run [opt_libexec/"bitdvr-libtorrent-daemon.py"]
+    run [opt_libexec/"bitsend-libtorrent-daemon.py"]
     keep_alive true
-    log_path var/"log/bitdvr-libtorrent-daemon.log"
-    error_log_path var/"log/bitdvr-libtorrent-daemon.log"
+    log_path var/"log/bitsend-libtorrent-daemon.log"
+    error_log_path var/"log/bitsend-libtorrent-daemon.log"
   end
 
   def caveats
     <<~EOS
-      Launch the app with:  bitdvr
+      Launch the app with:  bitsend
 
       For a permanent launcher in the Dock (links the app bundle into
       ~/Applications and pins it — the Dock restarts briefly):
-        bitdvr-dock
-      Unpin with `bitdvr-dock --remove` or by dragging the icon off.
+        bitsend-dock
+      Unpin with `bitsend-dock --remove` or by dragging the icon off.
       Spotlight doesn't index symlinked apps — use the Dock, Finder,
-      or the `bitdvr` command.
+      or the `bitsend` command.
 
-      BitDVR drives OBS Studio 28+, installed separately:
-        brew install --cask obs
-      In OBS: enable Tools -> WebSocket Server Settings (set a password)
-      and grant OBS Screen Recording permission when macOS asks. Then
-      BitDVR's Settings tab ("Set Up OBS for BitDVR...") can apply the
-      recording path and format OBS needs for BitDVR.
-
-      Network path only (sending to a media server on another machine) —
-      start the seed daemon:
-        brew services start bitdvr
+      The seed daemon has to be running to send anything:
+        brew services start bitsend
 
       Passwords are kept in the login Keychain, never on disk.
     EOS
   end
 
   test do
-    (testpath/"payload.txt").write "bitdvr formula test payload"
-    system libexec/"bitdvr-create-torrent.py", "--private",
+    (testpath/"payload.txt").write "bitsend formula test payload"
+    system libexec/"bitsend-create-torrent.py", "--private",
            "-o", testpath/"payload.torrent", testpath/"payload.txt"
-    assert_match "magnet:?xt=urn:btih:",
-                 shell_output("#{libexec}/bitdvr-magnet-uri.py #{testpath}/payload.torrent")
+    assert_path_exists testpath/"payload.torrent"
   end
 end

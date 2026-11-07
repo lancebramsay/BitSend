@@ -2,7 +2,7 @@
 # Creates a .torrent using libtorrent directly (not transmission-create).
 # Deluge on the receiving box is itself built on libtorrent, so building
 # torrent with the same library removes one implementation from the
-# picture — see bitdvr-sync.sh for the fuller story on why this matters.
+# picture — see bitsend-sync.sh for the fuller story on why this matters.
 import argparse
 import os
 
