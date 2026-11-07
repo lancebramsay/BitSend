@@ -18,25 +18,27 @@ set -euo pipefail
 # two peers actually find each other, seeding the connection directly
 # instead of relying on discovery of any kind.
 #
-# --move-to is where Deluge drops the album once the torrent completes, and
+# --move-to is where Deluge drops the item once the torrent completes, and
 # it's how this script confirms delivery. Deluge's "move completed" is
 # effectively a directory move, so always pass the folder one level *above*
-# the album (Music/<Artist>), so a send only ever introduces a new name at
-# the destination. Sending the same album a second time WOULD collide:
-# Deluge nests a duplicate inside the existing one instead of merging.
+# the item (Music/<Artist> for an album), so a send only ever introduces a
+# new name at the destination. Sending the same item a second time WOULD
+# collide: Deluge nests a duplicate inside the existing one instead of
+# merging.
 #
-# A send is synchronous and only counts once Deluge reports the album at
+# A send is synchronous and only counts once Deluge reports the item at
 # --move-to, not merely 100% downloaded: the move happens after the
 # download, and until it's done the local copy is the only safety net. Only
 # then does this script stop seeding, remove the finished torrent from
 # Deluge (the files stay), and move the local copy to --archive-to. A
-# failure at any point leaves the album where it was and the seed running;
+# failure at any point leaves the item where it was and the seed running;
 # rerun the same command to resume, since a torrent already in Deluge is
 # picked back up rather than added again.
 #
-# --torrent-name is the torrent's filename, because album names aren't
+# --torrent-name is the torrent's filename, because item names aren't
 # unique (two artists' "Greatest Hits" would otherwise share a watch-dir
-# slot). Run through bitsend-music.sh, which checks albums first.
+# slot). --label is the Deluge label: music, movies, or tv. Run through
+# bitsend-send.sh, which checks everything first.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${BITSEND_PYTHON:-python3}"
@@ -80,13 +82,14 @@ secret_store() { # printf '%s' <secret> | secret_store <service> <account> <labe
 }
 
 usage() {
-    echo "Usage: $0 --path <album-dir> --move-to <abs-path-on-deluge-host>" >&2
-    echo "       --torrent-name <name> --archive-to <local-path> [--host <deluge-host>]" >&2
+    echo "Usage: $0 --path <file-or-dir> --label music|movies|tv" >&2
+    echo "       --move-to <abs-path-on-deluge-host> --torrent-name <name>" >&2
+    echo "       --archive-to <local-path> [--host <deluge-host>]" >&2
     echo "       --host defaults to \$BITSEND_PLEX_HOST; one of the two is required" >&2
     exit 1
 }
 
-LABEL="music"
+LABEL=""
 SRC_PATH=""
 MOVE_TO=""
 NAME=""
@@ -94,6 +97,7 @@ ARCHIVE_DEST=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --path) SRC_PATH="$2"; shift 2 ;;
+        --label) LABEL="$2"; shift 2 ;;
         --host) PLEX_HOST="$2"; shift 2 ;;
         --move-to) MOVE_TO="$2"; shift 2 ;;
         --torrent-name) NAME="$2"; shift 2 ;;
@@ -106,6 +110,10 @@ done
 if [[ -z "$MOVE_TO" || -z "$NAME" || -z "$ARCHIVE_DEST" ]]; then
     usage
 fi
+case "$LABEL" in
+    music|movies|tv) ;;
+    *) echo "error: --label must be music, movies, or tv" >&2; exit 1 ;;
+esac
 MOVE_TO="${MOVE_TO%/}"
 if [[ -z "$PLEX_HOST" ]]; then
     echo "error: no Deluge host configured — pass --host, set \$BITSEND_PLEX_HOST," >&2
@@ -170,7 +178,7 @@ RPC_BODY_FILE=$(mktemp)
 trap 'rm -f "$COOKIE_JAR" "$RPC_BODY_FILE"' EXIT
 
 # params_json must be a pre-built JSON array string (build it with jq -nc
-# --arg at each call site — artist and album names are free text,
+# --arg at each call site — file and folder names are free text,
 # so this avoids breaking on quotes/backslashes the way manual string
 # interpolation would). The composed body is always written to a file
 # and posted with --data-binary @file rather than a literal -d "..."

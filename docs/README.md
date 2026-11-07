@@ -1,7 +1,7 @@
 # BitSend User Guide
 
-BitSend sends albums to a media server on another machine over a private,
-two-peer BitTorrent transfer.
+BitSend sends music, movies, and TV to a media server on another machine over
+a private, two-peer BitTorrent transfer.
 
 ## Contents
 
@@ -14,7 +14,7 @@ two-peer BitTorrent transfer.
 
 ## How it works
 
-BitSend runs on the machine that has the music. Your media server runs
+BitSend runs on the machine that has the files. Your media server runs
 [Deluge](https://deluge-torrent.org/) with its web UI. BitSend seeds each
 send from a small background daemon, tells Deluge to fetch it, and waits
 until Deluge has moved it into your library folder.
@@ -61,7 +61,7 @@ Spotlight doesn't index symlinked apps, so launch BitSend from the Dock,
 Finder, or the `bitsend` command.
 
 To remove: `brew services stop bitsend`, then `brew uninstall bitsend`.
-Settings, your music, and Keychain entries are kept.
+Settings, your media, and Keychain entries are kept.
 
 ### Linux
 
@@ -88,7 +88,7 @@ dependencies yourself. On immutable distros like Bazzite or Silverblue, the
 installer stops and lists what's missing instead of layering packages; use
 Homebrew on Linux, then rerun.
 
-To remove BitSend, run `./uninstall.sh`. Your music is never touched, and
+To remove BitSend, run `./uninstall.sh`. Your media is never touched, and
 settings are kept unless you pass `--purge-config`, which asks first.
 
 BitSend can be installed alongside BitDVR. By default they share nothing:
@@ -102,9 +102,10 @@ BitDVR is uninstalled; rerun `./install.sh` without the flag to switch back.
 1. Open the **Settings** tab.
 2. Set **Deluge Host IP** to the media-server machine.
 3. Set **Media library root (on Deluge host)** to the folder there that
-   contains `Music/` (e.g. `/mnt/media`).
-4. Set **Music folder** to your `<Artist>/<Album>` tree, such as a CD ripper's
-   output folder. Blank uses `~/Rips/staging`.
+   contains `Music/`, `Movies/`, and `TV/` (e.g. `/mnt/media`).
+4. Set **Staging folder** to where files wait to be sent. Blank uses
+   `~/Rips/staging`. BitSend reads its `Music/`, `Movies/`, and `TV/`
+   subfolders; see [Getting files ready](sending.md#getting-files-ready).
 5. Click **Save**. The first send prompts once for the Deluge web password
    and stores it in your desktop keyring.
 
@@ -112,8 +113,8 @@ BitDVR is uninstalled; rerun `./install.sh` without the flag to switch back.
 
 | What | Where |
 |---|---|
-| Music to send | the **Music folder** setting (default `~/Rips/staging`) |
-| Sent albums | a `sent` folder beside it (default `~/Rips/sent`) |
+| Files to send | the **Staging folder** setting (default `~/Rips/staging`), in `Music/`, `Movies/`, and `TV/` |
+| Sent files | a `sent` folder beside it (default `~/Rips/sent`), same layout |
 | Settings | `~/.config/bitsend/config.json` |
 | Passwords | desktop keyring (via `secret-tool`) — macOS: login Keychain; never on disk |
 | Logs (one per run) | `~/.local/share/bitsend/logs/` |

@@ -1,31 +1,40 @@
 # Advanced Setup: Media Servers & Deluge
 
 This page covers the machinery *around* BitSend: the media server that plays
-your music, and the Deluge BitTorrent client that receives them.
+your files, and the Deluge BitTorrent client that receives them.
 
 ## Media server libraries
 
-BitSend sends albums into the standard layout both
-Plex and Jellyfin scan for:
+BitSend sends into the standard layout both Plex and Jellyfin scan for:
 
 ```
 <library root>/
-└── Music/
-    └── Artist/
-        └── Album/
-            └── 01 - Track.flac
+├── Music/
+│   └── Artist/
+│       └── Album/
+│           └── 01 - Track.flac
+├── Movies/
+│   └── Movie (Year)/
+│       └── Movie (Year).mkv
+└── TV/
+    └── Show/
+        └── Season 01/
+            └── Show - S01E01.mkv
 ```
 
-Point a music library at that folder:
+Point a library of the matching type at each folder:
 
-- **Plex:** *Settings → Libraries → Add Library* → type **Music** → folder
-  `<root>/Music`. Enable *Scan my library automatically* so new arrivals appear
-  without a manual scan.
+- **Plex:** *Settings → Libraries → Add Library* → type **Music**, **Movies**,
+  or **TV Shows** → folder `<root>/Music`, `<root>/Movies`, or `<root>/TV`.
+  Enable *Scan my library automatically* so new arrivals appear without a
+  manual scan.
 - **Jellyfin:** *Dashboard → Libraries → Add Media Library* → content type
-  **Music** → `<root>/Music`. Enable *real-time monitoring*.
+  **Music**, **Movies**, or **Shows** → the matching folder. Enable
+  *real-time monitoring*.
 
-Music libraries group by embedded tags, particularly **Album Artist**, so
-inconsistent values split one album into several. Tag before sending.
+You only need the libraries you send to. Music libraries group by embedded
+tags, particularly **Album Artist**, so inconsistent values split one album
+into several. Tag before sending.
 
 ## Deluge
 
@@ -66,8 +75,8 @@ affects where files land. Labels just sort Deluge's own list, and BitSend
 removes finished torrents from it anyway. If you want one:
 
 1. *Preferences → Plugins* → enable **Label**.
-2. In the sidebar, right-click **Labels → Add Label**. Create `music`
-   (lowercase).
+2. In the sidebar, right-click **Labels → Add Label**. Create `music`,
+   `movies`, and `tv` (lowercase).
 
 Without it, sends log a harmless warning.
 
@@ -82,7 +91,7 @@ group-readable.
 
 ### Sanity check
 
-Send one album first. You should see the torrent appear in the Deluge
+Send one album or episode first. You should see the torrent appear in the Deluge
 web UI, hit 100% within seconds on a wired LAN, land in the right library
 folder, and disappear from Deluge's list once BitSend finishes. If not, the
 [troubleshooting list](sending.md#troubleshooting) covers the usual causes.

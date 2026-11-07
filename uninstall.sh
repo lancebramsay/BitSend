@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # By default this removes only what install.sh created: the scripts in
 # ~/.local/bin, the desktop entry, and the seed daemon service. Your
-# settings, keyring secrets, and music are all kept. Settings
+# settings, keyring secrets, and media are all kept. Settings
 # can be purged:
 #
 # Usage: ./uninstall.sh [--purge-config]
@@ -53,7 +53,7 @@ rm -f "$UNIT_DIR/$SERVICE.service"
 systemctl --user daemon-reload 2>/dev/null || true
 
 info "Removing installed files from $BIN_DIR"
-rm -f "$BIN_DIR"/bitsend-gui.py "$BIN_DIR"/bitsend-sync.sh "$BIN_DIR"/bitsend-music.sh \
+rm -f "$BIN_DIR"/bitsend-gui.py "$BIN_DIR"/bitsend-sync.sh "$BIN_DIR"/bitsend-send.sh "$BIN_DIR"/bitsend-music.sh \
       "$BIN_DIR"/bitsend-create-torrent.py "$BIN_DIR"/bitsend-libtorrent-daemon.py
 rm -f "$APP_DIR/bitsend.desktop"
 

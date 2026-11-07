@@ -9,8 +9,8 @@ agreements that apply to you.
 
 ## Intended use
 
-BitSend moves music you already lawfully have from one of your own machines
-to another, within your own home network, for your own private,
+BitSend moves music and video you already lawfully have from one of your own
+machines to another, within your own home network, for your own private,
 noncommercial use. That is the kind of use sometimes called
 **space-shifting** ([Wikipedia: Ripping — legality](https://en.wikipedia.org/wiki/Ripping#Legality)):
 moving your own copy between your own devices. The law on space-shifting,

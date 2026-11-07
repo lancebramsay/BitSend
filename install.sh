@@ -10,7 +10,7 @@ set -euo pipefail
 #   - Idempotent: re-running upgrades the installed copies in place and
 #     re-issues already-satisfied steps harmlessly.
 #   - Non-destructive: never touches ~/.config/bitsend/config.json,
-#     keyring secrets, or your music.
+#     keyring secrets, or your media.
 #   - Installs alongside BitDVR without touching it: by default nothing
 #     is shared with it, including the seed daemon's port.
 #   - Compiled dependencies (libtorrent bindings, Tk) come from the
@@ -185,9 +185,11 @@ info "libtorrent Python: $LT_PYTHON"
 
 info "Installing BitSend to $BIN_DIR"
 mkdir -p "$BIN_DIR"
-# Left behind by installs from before BitSend went music-only.
-rm -f "$BIN_DIR/bitsend-organize.sh" "$BIN_DIR/bitsend-magnet.sh" "$BIN_DIR/bitsend-magnet-uri.py"
-for f in bitsend-gui.py bitsend-sync.sh bitsend-music.sh \
+# Left behind by earlier installs: the movies/TV/music build's organizer
+# and magnet helpers, and the music-only build's bitsend-music.sh.
+rm -f "$BIN_DIR/bitsend-organize.sh" "$BIN_DIR/bitsend-magnet.sh" "$BIN_DIR/bitsend-magnet-uri.py" \
+      "$BIN_DIR/bitsend-music.sh"
+for f in bitsend-gui.py bitsend-sync.sh bitsend-send.sh \
          bitsend-create-torrent.py bitsend-libtorrent-daemon.py; do
     install -m 0755 "$REPO_DIR/src/$f" "$BIN_DIR/$f"
 done
@@ -219,7 +221,7 @@ cat > "$APP_DIR/bitsend.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=BitSend
-Comment=Send albums to your media server over private LAN BitTorrent
+Comment=Send music, movies, and TV to your media server over private LAN BitTorrent
 Exec=$BIN_DIR/bitsend-gui.py
 Icon=document-send
 Terminal=false

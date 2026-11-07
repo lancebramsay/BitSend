@@ -9,7 +9,7 @@
 #   sha256 "<shasum -a 256 of that tarball>"
 # and plain `brew install bitsend` starts working.
 class Bitsend < Formula
-  desc "Send albums to a media server over private LAN BitTorrent"
+  desc "Send music, movies, and TV to a media server over private LAN BitTorrent"
   homepage "https://github.com/lancebramsay/BitSend"
   license "GPL-3.0-or-later"
   head "https://github.com/lancebramsay/BitSend.git", branch: "main"
@@ -44,7 +44,7 @@ class Bitsend < Formula
     {
       "bitsend"          => "bitsend-gui.py",
       "bitsend-sync"     => "bitsend-sync.sh",
-      "bitsend-music"    => "bitsend-music.sh",
+      "bitsend-send"     => "bitsend-send.sh",
       "bitsend-dock"     => "bitsend-dock.sh",
     }.each do |name, target|
       (bin/name).write <<~SH

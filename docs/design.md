@@ -2,8 +2,9 @@
 
 This document explains *why* BitSend is built the way it is. BitSend is a
 fork of [BitDVR](https://github.com/lancebramsay/BitDVR), which recorded with
-OBS and delivered to a media server. BitSend keeps only the delivery half and
-points it at music. The delivery design below is inherited.
+OBS and delivered to a media server. BitSend keeps only the delivery half,
+for music, movies, and TV that are already named. The delivery design below
+is inherited.
 
 For *how to use* BitSend, see the [User Guide](README.md) instead.
 
@@ -50,12 +51,12 @@ also happens to be *better* at the job than a copy command:
   torrent's info-dict. A completed transfer is a byte-correct one, no
   separate checksum step.
 - **Interruption is survivable.** A dropped transfer resumes at the
-  next piece boundary — meaningful when the payload is a large album.
+  next piece boundary — meaningful when the payload is a large movie.
 - **Delivery routing comes free.** Deluge's move-on-complete files the
   payload into the library on the *receiver* — no writable share, no agent on
   the media box, nothing but Deluge's existing RPC.
 - **One transfer, any shape.** A multi-disc album with its subfolders is one
-  torrent, just like a single-folder one.
+  torrent, and so is a single episode file.
 
 ### 2.2 A swarm of exactly two
 
@@ -161,17 +162,31 @@ different info-hash; keyed by name only, the daemon kept seeding the
 stale torrent while Deluge searched forever for peers on the new hash.
 An mtime change now triggers remove-and-re-add.
 
-## 3. Music: batches of small, independent sends
+## 3. Batches of small, independent sends
 
-A collection is hundreds of albums, which shapes three things.
-`bitsend-music.sh` wraps `bitsend-sync.sh` to handle them:
+A music collection is hundreds of albums, and a TV show is dozens of
+episodes, which shapes how items become torrents. `bitsend-send.sh` wraps
+`bitsend-sync.sh` to handle them:
 
-- **One torrent per album.** A collection-sized torrent would make a repeat
-  send collide with everything at once, and would fail as a unit.
-- **Unique torrent names.** Torrents are named `Artist - Album`, because two
-  artists' `Greatest Hits` would otherwise share a seed-daemon watch slot.
-- **Validation is up front.** Every album is checked before the first send, so
-  a half-finished rip stops the run at the start, not hours in.
+- **One torrent per item: an album, a movie, or a TV file.** A
+  collection-sized torrent would make a repeat send collide with everything at
+  once, and would fail as a unit.
+- **Each item lands one level above itself.** Deluge's move-on-complete nests
+  a folder inside an existing one of the same name rather than merging, so a
+  send must only ever add a new name at its destination. An album goes into
+  `Music/Artist/` and a movie into `Movies/`, both normally new names. A show
+  or season usually exists on the server already, so TV goes file by file into
+  `TV/Show/Season NN/`. That costs one torrent per episode, a few seconds each
+  on a LAN, and lets new episodes join an existing season.
+- **No names are checked.** BitSend sends what's in staging and leaves
+  matching to the media server. The folder an item sits in decides its
+  library and destination, nothing else.
+- **Unique torrent names.** Torrents are named after the item's path inside
+  its library, such as `Artist - Album` or `Show - Season 01 - file.mkv`,
+  because two artists' `Greatest Hits` would otherwise share a seed-daemon
+  watch slot.
+- **Validation is up front.** Every item is checked before the first send, so
+  a half-finished rip or copy stops the run at the start, not hours in.
 
 ## 4. Security & legal posture, as implemented
 

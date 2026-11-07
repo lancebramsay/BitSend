@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-# BitSend — GUI wrapper around bitsend-music.sh, meant to be installed to
+# BitSend — GUI wrapper around bitsend-send.sh, meant to be installed to
 # ~/.local/bin alongside copies of the scripts (see install.sh) and pinned
-# to the taskbar as its own app. Sends albums to a media server on another
-# machine over a private BitTorrent swarm instead of a network share.
+# to the taskbar as its own app. Sends music, movies, and TV to a media
+# server on another machine over a private BitTorrent swarm instead of a
+# network share.
 #
-#   Send — browse the <Artist>/<Album> music folder and send an album, an
-#     artist, or everything. Each album is its own torrent.
+#   Send — browse the staging folder's Music/, Movies/, and TV/ subfolders
+#     and send one item, a group (an artist, a show, a season), or a whole
+#     library. Each album, movie, or TV file is its own torrent.
 #   Clean — delete archived local copies of what's already been sent.
-#   Settings — the Deluge host, the library root on it, and the music
+#   Settings — the Deluge host, the library root on it, and the staging
 #     folder, persisted to ~/.config/bitsend/config.json (not the keyring —
 #     these aren't secret). Also holds the "Change Password" action for the
 #     keyring secret, since the normal prompt flow only fires when nothing
@@ -15,7 +17,7 @@
 #     the BITSEND_PLEX_HOST env var, matching the env override they accept
 #     standalone.
 #
-# Sends run bitsend-music.sh as a subprocess and stream its stdout/stderr
+# Sends run bitsend-send.sh as a subprocess and stream its stdout/stderr
 # into a scrolling log pane live, while also writing each run to a
 # timestamped file under ~/.local/share/bitsend/logs/. A send stays running
 # until the media server confirms delivery. The deluge-web keyring password
@@ -36,20 +38,39 @@ from tkinter import filedialog, messagebox, ttk
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-MUSIC_SCRIPT = SCRIPT_DIR / "bitsend-music.sh"
+SEND_SCRIPT = SCRIPT_DIR / "bitsend-send.sh"
 IS_MACOS = sys.platform == "darwin"
-DEFAULT_MUSIC_DIR = Path.home() / "Rips" / "staging"
+DEFAULT_STAGING_DIR = Path.home() / "Rips" / "staging"
 LOG_DIR = Path.home() / ".local" / "share" / "bitsend" / "logs"
 CONFIG_DIR = Path.home() / ".config" / "bitsend"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SECRET_TOOL = "secret-tool"
 SECRET_SERVICE = "bitsend-deluge-web"
-AUDIO_EXTS = {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".aiff"}
 DEFAULT_CONFIG = {
     "plex_host": "",
     "remote_library_root": "",
-    "music_source": "",  # "" means DEFAULT_MUSIC_DIR
+    "staging_dir": "",  # "" means DEFAULT_STAGING_DIR
 }
+
+
+class Library:
+    """One media library. folder is its subfolder in staging, in sent, and
+    on the server. depth is how deep a send unit sits under it, matching
+    bitsend-send.sh: an album is <Artist>/<Album>, a movie is a top-level
+    entry (file or folder), and TV goes file by file (None: any depth).
+    dirs_only: a unit must be a folder."""
+
+    def __init__(self, key, folder, noun, depth, dirs_only=False):
+        self.key, self.folder, self.noun, self.depth = key, folder, noun, depth
+        self.dirs_only = dirs_only
+
+
+LIBRARIES = [
+    Library("music", "Music", "album", 2, dirs_only=True),
+    Library("movies", "Movies", "movie", 1),
+    Library("tv", "TV", "file", None),
+]
+LIBRARY_BY_KEY = {lib.key: lib for lib in LIBRARIES}
 
 
 def load_config():
@@ -58,6 +79,9 @@ def load_config():
         try:
             data = json.loads(CONFIG_FILE.read_text())
             if isinstance(data, dict):
+                # Music-only BitSend called the staging folder music_source.
+                if "staging_dir" not in data and "music_source" in data:
+                    data["staging_dir"] = data["music_source"]
                 cfg.update({k: data[k] for k in DEFAULT_CONFIG if k in data})
         except (json.JSONDecodeError, OSError):
             pass
@@ -136,35 +160,55 @@ def secret_clear(service, account):
 
 
 
-def audio_files(directory):
-    return sorted(
-        p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS
-    )
+def plural(n, noun):
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
-def scan_music_root(root_dir):
-    """Returns {artist_name: [album_path]} for a <Artist>/<Album> tree. An
-    album counts if there's audio anywhere under it, so multi-disc sets
-    with Disc 1/Disc 2 subfolders stay one album."""
-    artists = {}
-    if not root_dir.is_dir():
-        return artists
-    for artist in sorted(p for p in root_dir.iterdir() if p.is_dir()):
-        albums = [p for p in sorted(artist.iterdir()) if p.is_dir() and audio_files(p)]
-        if albums:
-            artists[artist.name] = albums
-    return artists
+def visible(p):
+    return not p.name.startswith(".")
 
 
-def music_source(config):
-    configured = str(config.get("music_source", "")).strip()
-    return Path(configured).expanduser() if configured else DEFAULT_MUSIC_DIR
+def files_under(p):
+    """Every non-hidden file at or under p."""
+    if p.is_file():
+        return [p] if visible(p) else []
+    if not p.is_dir():
+        return []
+    return sorted(f for f in p.rglob("*") if f.is_file() and visible(f))
+
+
+def children(p):
+    """Non-hidden entries of a folder that hold at least one file, sorted
+    folders first."""
+    if not p.is_dir():
+        return []
+    kids = [c for c in p.iterdir() if visible(c) and files_under(c)]
+    return sorted(kids, key=lambda c: (not c.is_dir(), c.name.lower()))
+
+
+def units_under(lib, lib_root, path):
+    """The items bitsend-send.sh would send for path, one torrent each."""
+    depth = len(path.relative_to(lib_root).parts)
+    if lib.depth is None:
+        return files_under(path)
+    if depth >= lib.depth:
+        ok = files_under(path) and (path.is_dir() or not lib.dirs_only)
+        return [path] if ok else []
+    found = []
+    for child in children(path):
+        found.extend(units_under(lib, lib_root, child))
+    return found
+
+
+def staging_dir(config):
+    configured = str(config.get("staging_dir", "")).strip()
+    return Path(configured).expanduser() if configured else DEFAULT_STAGING_DIR
 
 
 def sent_dir(config):
-    """Must match SENT_DIR in bitsend-music.sh, which also resolves symlinks
+    """Must match SENT_DIR in bitsend-send.sh, which also resolves symlinks
     (on Bazzite, /home is itself one)."""
-    return music_source(config).resolve().parent / "sent"
+    return staging_dir(config).resolve().parent / "sent"
 
 
 class App(tk.Tk):
@@ -329,7 +373,7 @@ class App(tk.Tk):
         self.set_remote_root_var = tk.StringVar(
             value=self.config.get("remote_library_root", DEFAULT_CONFIG["remote_library_root"])
         )
-        self.set_music_source_var = tk.StringVar(value=self.config.get("music_source", ""))
+        self.set_staging_var = tk.StringVar(value=self.config.get("staging_dir", ""))
 
         frm = ttk.Frame(parent)
         frm.pack(fill="x", padx=8, pady=8)
@@ -347,24 +391,24 @@ class App(tk.Tk):
         )
         ttk.Label(
             frm,
-            text="Path on the Deluge/media-server box containing Music/ (e.g. "
-                 "/mnt/media) — every send builds its destination from it.",
+            text="Path on the Deluge/media-server box containing Music/, Movies/, "
+                 "and TV/ (e.g. /mnt/media) — every send builds its destination from it.",
             foreground="#888888", wraplength=680, justify="left",
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
-        ttk.Label(frm, text="Music folder:").grid(
+        ttk.Label(frm, text="Staging folder:").grid(
             row=3, column=0, sticky="w", pady=(10, 0)
         )
-        ttk.Entry(frm, textvariable=self.set_music_source_var).grid(
+        ttk.Entry(frm, textvariable=self.set_staging_var).grid(
             row=3, column=1, sticky="ew", padx=6, pady=(10, 0)
         )
-        ttk.Button(frm, text="Browse...", command=self._on_browse_music_source).grid(
+        ttk.Button(frm, text="Browse...", command=self._on_browse_staging).grid(
             row=3, column=2, pady=(10, 0)
         )
         ttk.Label(
             frm,
-            text="The <Artist>/<Album> tree to send from, such as a CD ripper's "
-                 f"output folder. Blank uses {DEFAULT_MUSIC_DIR}. Sent albums move "
-                 "to a folder called sent beside it.",
+            text="Holds Music/<Artist>/<Album>, Movies/, and TV/<Show>/, laid out "
+                 f"the way the server's library is. Blank uses {DEFAULT_STAGING_DIR}. "
+                 "Sent items move to a folder called sent beside it.",
             foreground="#888888", wraplength=680, justify="left",
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
@@ -399,10 +443,10 @@ class App(tk.Tk):
             export_btn_row, text="Import Settings...", command=self._on_import_config,
         ).pack(side="left")
 
-    def _on_browse_music_source(self):
+    def _on_browse_staging(self):
         path = filedialog.askdirectory(initialdir=str(Path.home()))
         if path:
-            self.set_music_source_var.set(path)
+            self.set_staging_var.set(path)
 
     def _on_export_config(self):
         path = filedialog.asksaveasfilename(
@@ -432,6 +476,8 @@ class App(tk.Tk):
         except (OSError, json.JSONDecodeError) as e:
             messagebox.showerror("Import failed", f"Could not read that file:\n\n{e}")
             return
+        if isinstance(data, dict) and "staging_dir" not in data and "music_source" in data:
+            data["staging_dir"] = data["music_source"]
         if not isinstance(data, dict) or not any(k in data for k in DEFAULT_CONFIG):
             messagebox.showerror("Import failed", "That file doesn't look like a BitSend settings export.")
             return
@@ -440,7 +486,7 @@ class App(tk.Tk):
         save_config(self.config)
         self.set_plex_host_var.set(self.config["plex_host"])
         self.set_remote_root_var.set(self.config.get("remote_library_root", ""))
-        self.set_music_source_var.set(self.config.get("music_source", ""))
+        self.set_staging_var.set(self.config.get("staging_dir", ""))
         self._refresh_tree()
         self._refresh_clean_tree()
         messagebox.showinfo("Import Settings", "Settings imported and applied.")
@@ -449,7 +495,7 @@ class App(tk.Tk):
         self.config = {
             "plex_host": self.set_plex_host_var.get().strip(),
             "remote_library_root": self.set_remote_root_var.get().strip(),
-            "music_source": self.set_music_source_var.get().strip(),
+            "staging_dir": self.set_staging_var.get().strip(),
         }
         save_config(self.config)
         self._refresh_tree()
@@ -486,7 +532,7 @@ class App(tk.Tk):
         tscroll.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_tree_select())
 
-        self.send_details_var = tk.StringVar(value="Select an album to send.")
+        self.send_details_var = tk.StringVar(value="Select something to send.")
         ttk.Label(
             parent, textvariable=self.send_details_var, wraplength=680, justify="left"
         ).pack(fill="x", padx=8)
@@ -496,29 +542,42 @@ class App(tk.Tk):
         )
         self.send_btn.pack(pady=8)
 
+    def _fill_tree(self, tree, root):
+        """Adds a node per library under root (staging or sent), each with
+        its folders and items down to the send unit (TV: every file).
+        Node values are (library key, path). Returns how many items each
+        library holds."""
+        counts = {}
+        for lib in LIBRARIES:
+            lib_root = root / lib.folder
+            units = units_under(lib, lib_root, lib_root) if lib_root.is_dir() else []
+            counts[lib.key] = len(units)
+            node = tree.insert(
+                "", "end", open=True,
+                text=f"{lib.folder} ({plural(len(units), lib.noun)})",
+                values=(lib.key, str(lib_root)),
+            )
+            self._fill_children(tree, node, lib, lib_root, 0)
+        return counts
+
+    def _fill_children(self, tree, node, lib, path, depth):
+        if lib.depth is not None and depth >= lib.depth:
+            return
+        for child in children(path):
+            child_node = tree.insert(
+                node, "end", text=child.name, values=(lib.key, str(child)),
+                open=lib.key == "music" and depth == 0,
+            )
+            if child.is_dir():
+                self._fill_children(tree, child_node, lib, child, depth + 1)
+
     def _refresh_tree(self):
         if not hasattr(self, "tree"):
             return
         self.tree.delete(*self.tree.get_children())
-        music = scan_music_root(music_source(self.config))
-
-        if music:
-            total = sum(len(albums) for albums in music.values())
-            all_node = self.tree.insert(
-                "", "end", text=f"All music ({total} album{'s' if total != 1 else ''})", open=True
-            )
-            self.tree.item(all_node, values=("all", ""))
-            for artist, albums in music.items():
-                artist_node = self.tree.insert(all_node, "end", text=artist, open=True)
-                self.tree.item(artist_node, values=("artist", artist))
-                for album in albums:
-                    node = self.tree.insert(artist_node, "end", text=album.name)
-                    self.tree.item(node, values=("album", artist, str(album)))
-        else:
-            self.tree.insert("", "end", text=f"(no albums in {music_source(self.config)})")
-
+        self._fill_tree(self.tree, staging_dir(self.config))
         self.send_btn.configure(state="disabled")
-        self.send_details_var.set("Select an album to send.")
+        self.send_details_var.set("Select something to send.")
 
     def _selected_send_plan(self):
         sel = self.tree.selection()
@@ -527,13 +586,14 @@ class App(tk.Tk):
         values = self.tree.item(sel[0], "values")
         if not values:
             return None
-        kind, artist = values[0], values[1]
+        lib = LIBRARY_BY_KEY[values[0]]
+        path = Path(values[1])
         # The library root on the Deluge host is how the destination is
         # built, and how delivery gets confirmed.
         remote_root = str(self.config.get("remote_library_root", "")).strip().rstrip("/")
         if not remote_root:
             return {
-                "kind": kind,
+                "single": True,
                 "cmd": None,
                 "detail": (
                     "Sends need the media library root (Settings tab) to build their "
@@ -541,40 +601,38 @@ class App(tk.Tk):
                 ),
             }
 
-        source = music_source(self.config)
+        lib_root = staging_dir(self.config) / lib.folder
+        units = units_under(lib, lib_root, path)
+        if not units:
+            return {"single": True, "cmd": None, "detail": f"Nothing to send in {path.name}."}
         cmd = [
-            str(MUSIC_SCRIPT), "--yes", "--source", str(source),
+            str(SEND_SCRIPT), "--yes", "--library", lib.key,
+            "--staging", str(staging_dir(self.config)),
             "--remote-root", remote_root,
         ]
-        if kind == "album":
-            path = values[2]
+        if path != lib_root:
+            cmd.append(str(path))
+        if len(units) == 1:
+            dest = Path(lib.folder) / units[0].relative_to(lib_root).parent
             return {
-                "kind": kind,
-                "cmd": cmd + [path],
-                "detail": f"Will send '{Path(path).name}' → Music/{artist}/",
+                "single": True,
+                "cmd": cmd,
+                "detail": f"Will send '{units[0].name}' → {dest.as_posix()}/",
             }
-        if kind == "artist":
-            albums = scan_music_root(source).get(artist, [])
-            return {
-                "kind": kind,
-                "cmd": cmd + [str(album) for album in albums],
-                "detail": f"Will send {len(albums)} album(s), one torrent each → Music/{artist}/",
-            }
-        total = sum(len(albums) for albums in scan_music_root(source).values())
+        detail = f"Will send {plural(len(units), lib.noun)}, one torrent each, into {lib.folder}/."
+        if lib.key == "tv":
+            detail += " TV goes file by file so new episodes can join a show already on the server."
         return {
-            "kind": kind,
+            "single": False,
             "cmd": cmd,
-            "detail": (
-                f"Will send all {total} album(s), one torrent each → Music/<Artist>/. "
-                "Every album is checked before the first one is sent."
-            ),
+            "detail": detail + " Everything is checked before the first one is sent.",
         }
 
     def _on_tree_select(self):
         plan = self._selected_send_plan()
         if plan is None:
             self.send_btn.configure(state="disabled")
-            self.send_details_var.set("Select an album to send.")
+            self.send_details_var.set("Select something to send.")
         else:
             self.send_btn.configure(state="normal" if plan["cmd"] else "disabled")
             self.send_details_var.set(plan["detail"])
@@ -589,11 +647,11 @@ class App(tk.Tk):
                 "Set the Deluge Host IP in the Settings tab before sending.",
             )
             return
-        if not MUSIC_SCRIPT.is_file():
-            messagebox.showerror("Missing script", f"Not found: {MUSIC_SCRIPT}")
+        if not SEND_SCRIPT.is_file():
+            messagebox.showerror("Missing script", f"Not found: {SEND_SCRIPT}")
             return
-        if plan["kind"] != "album":
-            if not messagebox.askyesno("Send albums?", plan["detail"] + "\n\nSend now?"):
+        if not plan["single"]:
+            if not messagebox.askyesno("Send?", plan["detail"] + "\n\nSend now?"):
                 return
         if not self._ensure_secret():
             self._append_log("==> Send cancelled — no password provided.\n")
@@ -613,10 +671,10 @@ class App(tk.Tk):
 
         ttk.Label(
             parent,
-            text="Albums already sent, kept in the sent folder beside your music folder. "
-                 "Removing one deletes the local copy on this machine — the media "
-                 "server's copy is untouched, but BitSend will then let you send that "
-                 "album again.",
+            text="Items already sent, kept in the sent folder beside your staging "
+                 "folder. Removing one deletes the local copy on this machine — the "
+                 "media server's copy is untouched, but BitSend will then let you send "
+                 "it again.",
             foreground="#888888", wraplength=680, justify="left",
         ).pack(fill="x", padx=8, pady=(4, 0))
 
@@ -629,7 +687,7 @@ class App(tk.Tk):
         cscroll.pack(side="right", fill="y")
         self.clean_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_clean_tree_select())
 
-        self.clean_details_var = tk.StringVar(value="Select an album or artist to remove.")
+        self.clean_details_var = tk.StringVar(value="Select something to remove.")
         ttk.Label(
             parent, textvariable=self.clean_details_var, wraplength=680, justify="left"
         ).pack(fill="x", padx=8)
@@ -643,43 +701,34 @@ class App(tk.Tk):
         if not hasattr(self, "clean_tree"):
             return
         self.clean_tree.delete(*self.clean_tree.get_children())
-        root = sent_dir(self.config)
-        music = scan_music_root(root)
-
-        for artist, albums in music.items():
-            artist_node = self.clean_tree.insert("", "end", text=artist, open=True)
-            self.clean_tree.item(artist_node, values=(str(root / artist),))
-            for album in albums:
-                node = self.clean_tree.insert(artist_node, "end", text=album.name)
-                self.clean_tree.item(node, values=(str(album),))
-        if not music:
-            self.clean_tree.insert("", "end", text="(nothing sent yet)")
-
+        self._fill_tree(self.clean_tree, sent_dir(self.config))
         self.clean_remove_btn.configure(state="disabled")
-        self.clean_details_var.set("Select an album or artist to remove.")
+        self.clean_details_var.set("Select something to remove.")
 
-    def _on_clean_tree_select(self):
+    def _selected_clean_path(self):
         sel = self.clean_tree.selection()
         values = self.clean_tree.item(sel[0], "values") if sel else None
-        if not values:
+        return (LIBRARY_BY_KEY[values[0]], Path(values[1])) if values else (None, None)
+
+    def _on_clean_tree_select(self):
+        lib, p = self._selected_clean_path()
+        files = files_under(p) if p else []
+        if not files:
             self.clean_remove_btn.configure(state="disabled")
-            self.clean_details_var.set("Select an album or artist to remove.")
+            self.clean_details_var.set("Select something to remove.")
             return
-        p = Path(values[0])
-        files = audio_files(p)
         total_size = sum(f.stat().st_size for f in files)
         self.clean_remove_btn.configure(state="normal")
         self.clean_details_var.set(
-            f"Will permanently delete {len(files)} file(s) under '{p.name}' "
-            f"({total_size / 1_048_576:.0f} MiB total)."
+            f"Will permanently delete {plural(len(files), 'file')} under '{p.name}' "
+            f"({total_size / 1_048_576:,.0f} MiB total)."
         )
 
     def _on_remove_sent(self):
-        sel = self.clean_tree.selection()
-        values = self.clean_tree.item(sel[0], "values") if sel else None
-        if not values:
+        lib, p = self._selected_clean_path()
+        if p is None:
             return
-        p = Path(values[0])
+        lib_root = sent_dir(self.config) / lib.folder
         if not messagebox.askyesno(
             "Remove sent files?",
             f"Permanently delete this?\n\n{p}\n\n"
@@ -687,16 +736,26 @@ class App(tk.Tk):
         ):
             return
         try:
-            shutil.rmtree(p)
+            if p == lib_root:
+                # Keep the library folder itself, empty.
+                for child in p.iterdir():
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+            elif p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
         except OSError as e:
             messagebox.showerror("Remove failed", f"Could not remove:\n\n{e}")
+            self._refresh_clean_tree()
             return
-        # Clean up an artist folder left empty by removing its last album.
-        if p.parent != sent_dir(self.config):
+        # Clean up folders left empty, such as an artist after its last album.
+        parent = p.parent
+        while parent != lib_root and lib_root in parent.parents:
             try:
-                p.parent.rmdir()
+                parent.rmdir()
             except OSError:
-                pass
+                break
+            parent = parent.parent
 
         self._append_log(f"==> Removed {p.name}.\n")
         self._refresh_clean_tree()
