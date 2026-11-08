@@ -2,11 +2,7 @@
 
 This document explains *why* BitSend is built the way it is. BitSend is a
 fork of [BitDVR](https://github.com/lancebramsay/BitDVR), which recorded with
-OBS and delivered to a media server. BitSend keeps only the delivery half,
-for music, movies, and TV that are already named. The delivery design below
-is inherited.
-
-For *how to use* BitSend, see the [User Guide](README.md) instead.
+OBS and delivered to a media server. BitSend focuses on trasnferring the music, movies, and TV.
 
 ## 1. Design goals
 
@@ -20,8 +16,6 @@ For *how to use* BitSend, see the [User Guide](README.md) instead.
   GUI that streams their output, one small daemon.
 
 ## 2. Delivery: BitTorrent as a two-peer LAN courier
-
-The unusual choice, and the one with the most rationale behind it.
 
 ### 2.1 Why not scp / rsync / SMB / NFS?
 
@@ -60,10 +54,6 @@ also happens to be *better* at the job than a copy command:
 
 ### 2.2 A swarm of exactly two
 
-Everything BitTorrent is infamous for — strangers, trackers, discovery
-— is switched off at every layer, which is what makes constraint #1
-hold:
-
 | Layer | Setting | Effect |
 |---|---|---|
 | Torrent file | no trackers, ever | no tracker (public or private) ever sees the info-hash |
@@ -95,8 +85,6 @@ scripts' own comments — it cost enough to learn.)
 
 ### 2.4 Peer introduction, from both sides
 
-Two mechanisms, either of which suffices:
-
 1. **Server dials seeder** — `bitsend-sync.sh` tells Deluge
    `core.connect_peer(torrent_id, <seeder-ip>, 51414)`, where the
    seeder IP is discovered by asking the local routing table which
@@ -117,11 +105,6 @@ tracker or DHT to rediscover a dropped connection, so the daemon owns
 the retry loop.
 
 ### 2.5 Ordering is load-bearing
-
-On a wired LAN, the transfer can complete in well under a second once
-the peers meet — which turns "do A, then B" into a race if B was
-supposed to be in place first. The ordering in `bitsend-sync.sh` is therefore
-deliberate and documented in-line:
 
 - **Label and move-destination are configured before any peer
   introduction.** Deluge's move-on-complete fires exactly once, at
@@ -216,10 +199,6 @@ share, no credential — it's driven entirely through Deluge's existing web RPC.
 
 ## 5. Cross-platform strategy
 
-One codebase, explicit platform branches — `sys.platform == "darwin"` in
-Python, `uname -s` in shell — chosen over abstraction layers because the
-differences are few, shallow, and better kept visible:
-
 | Concern | Linux | macOS |
 |---|---|---|
 | Secrets | Secret Service keyring (`secret-tool`) | login Keychain (`security`) |
@@ -239,22 +218,17 @@ The formula also pins the interpreter trio together — `libtorrent-rasterbar`
 builds its Python bindings against one specific `python@3.x`, and `python-tk`
 must match it so a *single* interpreter has both tkinter and libtorrent.
 
-## 6. Non-goals
+## 6. Final Notes
 
-Rejected deliberately, not deferred by accident:
-
-- **Internet transfer.** Confinement to the LAN is the design's legal and
+- **No internet transfer.** Confinement to the LAN is the design's legal and
   security foundation, not a missing feature.
-- **Downloading anything.** BitSend moves files you already have; it will
+- **No external downloads.** BitSend moves files you already have; it will
   never be a content fetcher.
 - **Being a media server or scraper.** Plex and Jellyfin are good at that; BitSend's job ends when the file lands in the library.
-- **Same-machine delivery.** If the server is local, a file manager does the
-  job.
-- **Movies and TV.** BitDVR already covers those, organizing included.
 - **Renaming or tagging.** Files are sent as they are. Rippers and Picard do
   that job better.
 - **A daemon-ized GUI or tray applet.** The GUI is a tool you open; the only
   resident component is the seed daemon, which exists precisely because seeding
   must outlive the GUI.
-- **Windows support** — not on principle, but nothing in §5's table has a
-  Windows column yet.
+- **Movies and TV.** BitDVR already covers those, organizing included.
+- **Windows support** — Windows sucks.
